@@ -1,0 +1,28 @@
+# Entorno virtual de Python
+venv/
+*/venv/
+
+# Dependencias de Node.js
+node_modules/
+*/node_modules/
+
+# Archivos de Python
+__pycache__/
+*.pyc
+
+# Base de datos local SQLite
+db.sqlite3
+
+# Variables de entorno
+.env
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de salida
+dist/
+build/
+
+# Logs
+*.log
