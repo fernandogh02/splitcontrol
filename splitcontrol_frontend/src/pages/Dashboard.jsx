@@ -118,6 +118,13 @@ function Dashboard() {
           <button className="btn btn-success">
             💵 Registrar pago
           </button>
+
+          <button
+            className="btn btn-outline-primary"
+            onClick={() => navigate("/resumen")}
+          >
+            📊 Ver resumen
+          </button>
         </section>
 
         <section className="dashboard-content">
