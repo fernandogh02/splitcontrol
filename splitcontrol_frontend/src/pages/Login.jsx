@@ -35,6 +35,7 @@ function Login() {
 
       localStorage.setItem("access", response.data.access);
       localStorage.setItem("refresh", response.data.refresh);
+      localStorage.setItem("username", formData.username);
 
       setMensaje("Inicio de sesión correcto.");
 

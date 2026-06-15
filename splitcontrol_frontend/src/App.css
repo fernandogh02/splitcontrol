@@ -358,3 +358,160 @@
     grid-template-columns: 1fr;
   }
 }
+
+.create-group-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #345166;
+  margin-bottom: 34px;
+}
+
+.back-button {
+  border: none;
+  background: transparent;
+  color: #0876d8;
+  font-weight: 700;
+}
+
+.guide-button {
+  margin-left: auto;
+  border: 1px solid #ccd8e2;
+  background: white;
+  border-radius: 20px;
+  padding: 8px 16px;
+  color: #34495e;
+  font-weight: 600;
+}
+
+.create-group-header {
+  margin-bottom: 28px;
+}
+
+.create-group-header h1 {
+  font-size: 38px;
+  font-weight: 800;
+  margin: 0 0 8px;
+}
+
+.create-group-header p {
+  color: #687383;
+  max-width: 720px;
+}
+
+.create-group-grid {
+  display: grid;
+  grid-template-columns: minmax(420px, 680px) 320px;
+  gap: 32px;
+  align-items: start;
+}
+
+.create-group-card {
+  background: white;
+  border-radius: 14px;
+  padding: 28px;
+  box-shadow: 0 10px 24px rgba(17, 35, 56, 0.08);
+}
+
+.create-group-card textarea {
+  resize: none;
+}
+
+.create-group-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.create-group-footer small {
+  color: #6c757d;
+}
+
+.create-group-footer .btn {
+  min-width: 180px;
+}
+
+.benefits-column {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.benefits-card {
+  background: #0867b6;
+  color: white;
+  border-radius: 14px;
+  padding: 26px;
+  box-shadow: 0 10px 24px rgba(17, 35, 56, 0.12);
+}
+
+.benefits-card h4 {
+  font-weight: 800;
+  margin-bottom: 18px;
+}
+
+.benefits-card ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.benefits-card li {
+  margin-bottom: 14px;
+}
+
+.promo-card {
+  min-height: 150px;
+  border-radius: 14px;
+  padding: 22px;
+  color: white;
+  display: flex;
+  align-items: end;
+  background: linear-gradient(135deg, #1d3557, #2a9d8f);
+  box-shadow: 0 10px 24px rgba(17, 35, 56, 0.12);
+}
+
+.promo-card p {
+  font-weight: 700;
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .create-group-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .create-group-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .guide-button {
+    margin-left: 0;
+  }
+}
+
+.empty-groups-card {
+  background: white;
+  border-radius: 12px;
+  padding: 26px;
+  text-align: center;
+  box-shadow: 0 8px 20px rgba(17, 35, 56, 0.06);
+}
+
+.empty-groups-card h5 {
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.empty-groups-card p {
+  color: #6c757d;
+  margin-bottom: 18px;
+}
+
+.empty-movements {
+  padding: 28px 20px;
+  color: #6c757d;
+  text-align: center;
+}

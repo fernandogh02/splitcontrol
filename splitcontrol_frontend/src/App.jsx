@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
+import CreateGroup from "./pages/CreateGroup";
 import "./App.css";
 
 function App() {
@@ -12,6 +13,7 @@ function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/registro" element={<Register />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/grupos/crear" element={<CreateGroup />} />
       </Routes>
     </BrowserRouter>
   );

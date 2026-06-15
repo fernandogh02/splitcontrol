@@ -1,13 +1,29 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/splitcontrol-logo.png";
 
 function Dashboard() {
   const navigate = useNavigate();
+  const [grupos, setGrupos] = useState([]);
+
+  const username = localStorage.getItem("username") || "usuario";
+  const displayName = username.charAt(0).toUpperCase() + username.slice(1);
+  const avatarLetter = username.charAt(0).toUpperCase();
+
+  useEffect(() => {
+    const gruposGuardados = JSON.parse(localStorage.getItem("grupos")) || [];
+    setGrupos(gruposGuardados);
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem("access");
     localStorage.removeItem("refresh");
+    localStorage.removeItem("username");
     navigate("/login");
+  };
+
+  const goToCreateGroup = () => {
+    navigate("/grupos/crear");
   };
 
   return (
@@ -20,20 +36,27 @@ function Dashboard() {
 
           <nav className="sidebar-menu">
             <button className="sidebar-link active">▦ Dashboard</button>
-            <button className="sidebar-link">👥 Grupos</button>
+
+            <button className="sidebar-link" onClick={goToCreateGroup}>
+              👥 Grupos
+            </button>
+
             <button className="sidebar-link">↺ Historial</button>
             <button className="sidebar-link">♙ Perfil</button>
           </nav>
         </div>
 
         <div className="sidebar-bottom">
-          <button className="btn btn-primary w-100 mb-3">Registrar pago</button>
+          <button className="btn btn-primary w-100 mb-3">
+            Registrar pago
+          </button>
 
           <div className="user-box">
-            <div className="avatar">C</div>
+            <div className="avatar">{avatarLetter}</div>
+
             <div>
-              <strong>Carlita</strong>
-              <small>@carlita</small>
+              <strong>{displayName}</strong>
+              <small>@{username}</small>
             </div>
           </div>
 
@@ -50,7 +73,9 @@ function Dashboard() {
         <header className="dashboard-header">
           <div>
             <h1>Panel General</h1>
-            <p>Hola Carlita, aquí tienes un resumen de tus cuentas hoy.</p>
+            <p>
+              Hola {displayName}, aquí tienes un resumen de tus cuentas hoy.
+            </p>
           </div>
 
           <div className="header-actions">
@@ -62,70 +87,81 @@ function Dashboard() {
         <section className="summary-grid">
           <div className="summary-card debt">
             <div className="summary-icon red">▣</div>
+
             <div>
               <span>Debes a otros</span>
-              <h2>€1,240.50</h2>
-              <p>Repartido en 4 grupos diferentes</p>
+              <h2>€0.00</h2>
+              <p>Sin deudas registradas por ahora</p>
             </div>
           </div>
 
           <div className="summary-card income">
             <div className="summary-icon green">▣</div>
+
             <div>
               <span>Te deben</span>
-              <h2>€856.20</h2>
-              <p>Pendiente de cobro de 8 personas</p>
+              <h2>€0.00</h2>
+              <p>Sin cobros pendientes por ahora</p>
             </div>
           </div>
         </section>
 
         <section className="quick-actions">
-          <button className="btn btn-primary">👥 Crear grupo</button>
-          <button className="btn btn-primary">💳 Registrar gasto</button>
-          <button className="btn btn-success">💵 Registrar pago</button>
+          <button className="btn btn-primary" onClick={goToCreateGroup}>
+            👥 Crear grupo
+          </button>
+
+          <button className="btn btn-primary">
+            💳 Registrar gasto
+          </button>
+
+          <button className="btn btn-success">
+            💵 Registrar pago
+          </button>
         </section>
 
         <section className="dashboard-content">
           <div className="groups-section">
             <div className="section-title">
               <h3>Mis grupos</h3>
-              <button>Ver todos</button>
+
+              <button onClick={goToCreateGroup}>
+                Crear nuevo
+              </button>
             </div>
 
-            <div className="group-card">
-              <div className="group-image beach"></div>
-              <div className="group-info">
-                <strong>Viaje a la playa</strong>
-                <small>3 miembros · Hace 2h</small>
-                <span>Tú debes</span>
-              </div>
-              <strong className="amount negative">€45.00</strong>
-            </div>
+            {grupos.length === 0 ? (
+              <div className="empty-groups-card">
+                <h5>No tienes grupos creados todavía</h5>
+                <p>
+                  Crea tu primer grupo para organizar gastos compartidos.
+                </p>
 
-            <div className="group-card">
-              <div className="group-image apartment"></div>
-              <div className="group-info">
-                <strong>Apartamento</strong>
-                <small>4 miembros · Hace 1d</small>
-                <span>Te deben</span>
+                <button className="btn btn-primary" onClick={goToCreateGroup}>
+                  Crear grupo
+                </button>
               </div>
-              <strong className="amount positive">€230.15</strong>
-            </div>
+            ) : (
+              grupos.map((grupo) => (
+                <div className="group-card" key={grupo.id}>
+                  <div className="group-image beach"></div>
 
-            <div className="group-card">
-              <div className="group-image dinner"></div>
-              <div className="group-info">
-                <strong>Cena Viernes</strong>
-                <small>6 miembros · Hace 3d</small>
-                <span>Saldado</span>
-              </div>
-              <strong className="amount neutral">€0.00</strong>
-            </div>
+                  <div className="group-info">
+                    <strong>{grupo.nombre}</strong>
+                    <small>Creado el {grupo.fecha}</small>
+                    <span>{grupo.descripcion}</span>
+                  </div>
+
+                  <strong className="amount neutral">€0.00</strong>
+                </div>
+              ))
+            )}
           </div>
 
           <div className="movements-section">
             <div className="section-title">
               <h3>Últimos movimientos</h3>
+
               <button>Filtrar</button>
             </div>
 
@@ -137,48 +173,14 @@ function Dashboard() {
                 <span>Monto</span>
               </div>
 
-              <div className="movement-row">
-                <div>
-                  <strong>Compra Supermercado</strong>
-                  <small>Hoy, 14:30</small>
-                </div>
-                <span>Marta</span>
-                <span className="tag">Apartamento</span>
-                <strong className="negative">€84.20</strong>
-              </div>
-
-              <div className="movement-row">
-                <div>
-                  <strong>Cena Sushi</strong>
-                  <small>Ayer, 21:15</small>
-                </div>
-                <span>Tú</span>
-                <span className="tag">Cena Viernes</span>
-                <strong className="positive">€120.00</strong>
-              </div>
-
-              <div className="movement-row">
-                <div>
-                  <strong>Gasolina Viaje</strong>
-                  <small>12 Oct, 10:00</small>
-                </div>
-                <span>Carlos</span>
-                <span className="tag">Viaje a la playa</span>
-                <strong className="negative">€65.00</strong>
-              </div>
-
-              <div className="movement-row">
-                <div>
-                  <strong>Internet Septiembre</strong>
-                  <small>10 Oct, 09:00</small>
-                </div>
-                <span>Tú</span>
-                <span className="tag">Apartamento</span>
-                <strong className="positive">€40.00</strong>
+              <div className="empty-movements">
+                Todavía no existen movimientos registrados.
               </div>
             </div>
 
-            <button className="history-link">Ver historial completo</button>
+            <button className="history-link">
+              Ver historial completo
+            </button>
           </div>
         </section>
       </main>
