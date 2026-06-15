@@ -3,6 +3,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import CreateGroup from "./pages/CreateGroup";
+import ExpenseSummary from "./pages/ExpenseSummary";
 import PrivateRoute from "./components/PrivateRoute";
 import "./App.css";
 
@@ -29,6 +30,15 @@ function App() {
           element={
             <PrivateRoute>
               <CreateGroup />
+            </PrivateRoute>
+          }
+        />
+
+        <Route
+          path="/resumen"
+          element={
+            <PrivateRoute>
+              <ExpenseSummary />
             </PrivateRoute>
           }
         />
