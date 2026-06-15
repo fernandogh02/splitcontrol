@@ -3,12 +3,10 @@ import { Link } from "react-router-dom";
 import axios from "axios";
 import logo from "../assets/splitcontrol-logo.png";
 
-function Register() {
+function Login() {
   const [formData, setFormData] = useState({
     username: "",
-    email: "",
     password: "",
-    password2: "",
   });
 
   const [mensaje, setMensaje] = useState("");
@@ -29,35 +27,27 @@ function Register() {
 
     try {
       const response = await axios.post(
-        "http://127.0.0.1:8000/api/auth/registro/",
+        "http://127.0.0.1:8000/api/auth/login/",
         formData
       );
 
-      setMensaje(response.data.mensaje);
+      localStorage.setItem("access", response.data.access);
+      localStorage.setItem("refresh", response.data.refresh);
+
+      setMensaje("Inicio de sesión correcto.");
 
       setFormData({
         username: "",
-        email: "",
         password: "",
-        password2: "",
       });
     } catch (error) {
-      if (error.response && error.response.data) {
-        const errores = error.response.data;
-        const textoErrores = Object.values(errores).flat().join(" ");
-        setError(textoErrores);
-      } else {
-        setError("No se pudo conectar con el servidor.");
-      }
+      setError("Usuario o contraseña incorrectos.");
     }
   };
 
   return (
     <div className="container d-flex justify-content-center align-items-center min-vh-100">
-      <div
-        className="card shadow border-0"
-        style={{ maxWidth: "460px", width: "100%" }}
-      >
+      <div className="card shadow border-0" style={{ maxWidth: "430px", width: "100%" }}>
         <div className="card-body p-4">
           <div className="text-center mb-3">
             <img
@@ -66,11 +56,9 @@ function Register() {
               className="img-fluid mb-3"
               style={{ maxWidth: "230px" }}
             />
-
-            <h3 className="fw-bold">Crear cuenta</h3>
-
+            <h3 className="fw-bold">Iniciar sesión</h3>
             <p className="text-muted mb-0">
-              Regístrate para empezar a usar SplitControl
+              Ingresa a tu cuenta de SplitControl
             </p>
           </div>
 
@@ -95,20 +83,6 @@ function Register() {
                 className="form-control"
                 value={formData.username}
                 onChange={handleChange}
-                placeholder="Ej: fernando"
-                required
-              />
-            </div>
-
-            <div className="mb-3">
-              <label className="form-label">Correo electrónico</label>
-              <input
-                type="email"
-                name="email"
-                className="form-control"
-                value={formData.email}
-                onChange={handleChange}
-                placeholder="Ej: correo@ejemplo.com"
                 required
               />
             </div>
@@ -121,33 +95,19 @@ function Register() {
                 className="form-control"
                 value={formData.password}
                 onChange={handleChange}
-                placeholder="Mínimo 8 caracteres"
-                required
-              />
-            </div>
-
-            <div className="mb-3">
-              <label className="form-label">Confirmar contraseña</label>
-              <input
-                type="password"
-                name="password2"
-                className="form-control"
-                value={formData.password2}
-                onChange={handleChange}
-                placeholder="Repite tu contraseña"
                 required
               />
             </div>
 
             <button type="submit" className="btn btn-primary w-100">
-              Registrarse
+              Entrar
             </button>
           </form>
 
           <div className="text-center mt-4">
-            <span className="text-muted">¿Ya tienes cuenta? </span>
-            <Link to="/login" className="text-decoration-none fw-bold">
-              Inicia sesión
+            <span className="text-muted">¿No tienes cuenta? </span>
+            <Link to="/registro" className="text-decoration-none fw-bold">
+              Regístrate
             </Link>
           </div>
         </div>
@@ -156,4 +116,4 @@ function Register() {
   );
 }
 
-export default Register;
+export default Login;
