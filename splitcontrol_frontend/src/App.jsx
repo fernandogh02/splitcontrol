@@ -3,6 +3,7 @@ import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import CreateGroup from "./pages/CreateGroup";
+import PrivateRoute from "./components/PrivateRoute";
 import "./App.css";
 
 function App() {
@@ -10,10 +11,27 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to="/login" />} />
+
         <Route path="/login" element={<Login />} />
         <Route path="/registro" element={<Register />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/grupos/crear" element={<CreateGroup />} />
+
+        <Route
+          path="/dashboard"
+          element={
+            <PrivateRoute>
+              <Dashboard />
+            </PrivateRoute>
+          }
+        />
+
+        <Route
+          path="/grupos/crear"
+          element={
+            <PrivateRoute>
+              <CreateGroup />
+            </PrivateRoute>
+          }
+        />
       </Routes>
     </BrowserRouter>
   );
