@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import logo from "../assets/splitcontrol-logo.png";
 
 function Login() {
+  const navigate = useNavigate();
+
   const [formData, setFormData] = useState({
     username: "",
     password: "",
@@ -33,6 +35,7 @@ function Login() {
 
       localStorage.setItem("access", response.data.access);
       localStorage.setItem("refresh", response.data.refresh);
+      localStorage.setItem("username", formData.username);
 
       setMensaje("Inicio de sesión correcto.");
 
@@ -40,6 +43,8 @@ function Login() {
         username: "",
         password: "",
       });
+
+      navigate("/dashboard");
     } catch (error) {
       setError("Usuario o contraseña incorrectos.");
     }
@@ -47,7 +52,10 @@ function Login() {
 
   return (
     <div className="container d-flex justify-content-center align-items-center min-vh-100">
-      <div className="card shadow border-0" style={{ maxWidth: "430px", width: "100%" }}>
+      <div
+        className="card shadow border-0"
+        style={{ maxWidth: "430px", width: "100%" }}
+      >
         <div className="card-body p-4">
           <div className="text-center mb-3">
             <img
@@ -56,7 +64,9 @@ function Login() {
               className="img-fluid mb-3"
               style={{ maxWidth: "230px" }}
             />
+
             <h3 className="fw-bold">Iniciar sesión</h3>
+
             <p className="text-muted mb-0">
               Ingresa a tu cuenta de SplitControl
             </p>
