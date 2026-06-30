@@ -9,6 +9,7 @@ function GroupDetail() {
   const [grupo, setGrupo] = useState(null);
   const [usuarios, setUsuarios] = useState([]);
   const [usuarioSeleccionado, setUsuarioSeleccionado] = useState("");
+  const [participantesGasto, setParticipantesGasto] = useState([]);
 
   const [formData, setFormData] = useState({
     nombre: "",
@@ -197,6 +198,16 @@ function GroupDetail() {
     } catch (error) {
       setError("No se pudo eliminar el grupo. Intenta nuevamente.");
     }
+  };
+
+  const alternarParticipanteGasto = (participanteId) => {
+    setParticipantesGasto((seleccionados) => {
+      if (seleccionados.includes(participanteId)) {
+        return seleccionados.filter((item) => item !== participanteId);
+      }
+
+      return [...seleccionados, participanteId];
+    });
   };
 
   const agregarParticipante = async () => {
@@ -555,6 +566,75 @@ function GroupDetail() {
                           </button>
                         </div>
                       </div>
+
+                      <div className="mt-5">
+                        <div className="d-flex justify-content-between align-items-center">
+                          <div>
+                            <h5 className="mb-1">
+                              Seleccionar participantes para un gasto
+                            </h5>
+                            <small className="text-muted">
+                              Participantes seleccionados:{" "}
+                              {participantesGasto.length}
+                            </small>
+                          </div>
+                        </div>
+
+                        {grupo.participantes &&
+                        grupo.participantes.length > 0 ? (
+                          <div className="mt-3">
+                            {grupo.participantes.map((participante) => (
+                              <label
+                                key={participante.id}
+                                className="d-flex justify-content-between align-items-center border rounded p-3 mb-2"
+                                style={{ cursor: "pointer" }}
+                              >
+                                <div className="d-flex align-items-center gap-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={participantesGasto.includes(
+                                      participante.id
+                                    )}
+                                    onChange={() =>
+                                      alternarParticipanteGasto(participante.id)
+                                    }
+                                  />
+
+                                  <div>
+                                    <strong>
+                                      {participante.nombre_completo}
+                                    </strong>
+                                    <br />
+                                    <small className="text-muted">
+                                      @{participante.username}
+                                    </small>
+                                  </div>
+                                </div>
+
+                                <span className="badge bg-light text-dark">
+                                  Para gasto
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="empty-groups-card mt-3">
+                            <h5>No hay participantes disponibles</h5>
+                            <p>
+                              Primero agrega participantes al grupo para poder
+                              seleccionarlos en un gasto.
+                            </p>
+                          </div>
+                        )}
+
+                        {participantesGasto.length > 0 && (
+                          <div className="alert alert-info mt-3" role="alert">
+                            Selección preparada para un futuro registro de gasto.
+                            Esta información todavía no se guarda porque el
+                            módulo de gastos se implementará después.
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="create-group-footer mt-4">
@@ -579,8 +659,8 @@ function GroupDetail() {
                   <h4>Próximas funciones</h4>
 
                   <ul>
-                    <li>Seleccionar participantes para un gasto.</li>
                     <li>Registrar gastos compartidos.</li>
+                    <li>Guardar selección de participantes en un gasto.</li>
                     <li>Consultar balances entre participantes.</li>
                   </ul>
                 </div>
