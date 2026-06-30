@@ -20,3 +20,11 @@ class GroupListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         serializer.save(creador=self.request.user)
+
+
+class GroupDetailView(generics.RetrieveAPIView):
+    serializer_class = GroupSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Group.objects.filter(creador=self.request.user)

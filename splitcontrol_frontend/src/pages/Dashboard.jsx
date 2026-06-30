@@ -196,7 +196,12 @@ function Dashboard() {
               </div>
             ) : (
               grupos.map((grupo) => (
-                <div className="group-card" key={grupo.id}>
+                <div
+                  className="group-card"
+                  key={grupo.id}
+                  onClick={() => navigate(`/grupos/${grupo.id}`)}
+                  style={{ cursor: "pointer" }}
+                >
                   <div className="group-image beach"></div>
 
                   <div className="group-info">
