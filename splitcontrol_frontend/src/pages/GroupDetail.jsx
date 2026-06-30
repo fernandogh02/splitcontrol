@@ -128,6 +128,43 @@ function GroupDetail() {
     setError("");
   };
 
+  const eliminarGrupo = async () => {
+  const confirmar = window.confirm(
+    "¿Estás segura de que deseas eliminar este grupo? Esta acción no se puede deshacer."
+  );
+
+  if (!confirmar) {
+    return;
+  }
+
+  setMensaje("");
+  setError("");
+
+  const token = localStorage.getItem("access");
+
+  if (!token) {
+    setError("Tu sesión ha expirado. Inicia sesión nuevamente.");
+    return;
+  }
+
+  try {
+    const response = await fetch(`http://127.0.0.1:8000/api/grupos/${id}/`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error("No se pudo eliminar el grupo.");
+    }
+
+    navigate("/dashboard");
+  } catch (error) {
+    setError("No se pudo eliminar el grupo. Intenta nuevamente.");
+  }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("access");
     localStorage.removeItem("refresh");
@@ -227,17 +264,26 @@ function GroupDetail() {
                   <h4 className="mb-0">Información del grupo</h4>
 
                   {!modoEdicion && (
+                    <div className="d-flex gap-2">
                     <button
-                      className="btn btn-outline-primary"
-                      onClick={() => {
-                        setModoEdicion(true);
-                        setMensaje("");
-                        setError("");
-                      }}
-                    >
-                      Editar grupo
-                    </button>
-                  )}
+                          className="btn btn-outline-primary"
+                        onClick={() => {
+                       setModoEdicion(true);
+                            setMensaje("");
+                          setError("");
+                                  }}
+                               >
+                              Editar grupo
+                                 </button>
+
+                                 <button
+                                       className="btn btn-outline-danger"
+                             onClick={eliminarGrupo}
+                             >
+                                  Eliminar grupo
+                                       </button>
+                                    </div>
+                          )}
                 </div>
 
                 {mensaje && (
