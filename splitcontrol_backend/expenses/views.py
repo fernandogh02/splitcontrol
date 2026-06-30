@@ -22,7 +22,7 @@ class GroupListCreateView(generics.ListCreateAPIView):
         serializer.save(creador=self.request.user)
 
 
-class GroupDetailView(generics.RetrieveAPIView):
+class GroupDetailView(generics.RetrieveUpdateAPIView):
     serializer_class = GroupSerializer
     permission_classes = [permissions.IsAuthenticated]
 
