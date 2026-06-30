@@ -11,9 +11,12 @@ def prueba_api(request):
     })
 
 
-class GroupCreateView(generics.CreateAPIView):
+class GroupListCreateView(generics.ListCreateAPIView):
     serializer_class = GroupSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Group.objects.filter(creador=self.request.user)
 
     def perform_create(self, serializer):
         serializer.save(creador=self.request.user)
