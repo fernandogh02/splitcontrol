@@ -11,6 +11,10 @@ function GroupDetail() {
   const [usuarioSeleccionado, setUsuarioSeleccionado] = useState("");
   const [participantesGasto, setParticipantesGasto] = useState([]);
 
+  const [participanteEditando, setParticipanteEditando] = useState(null);
+  const [notaTemporal, setNotaTemporal] = useState("");
+  const [notasParticipantes, setNotasParticipantes] = useState({});
+
   const [formData, setFormData] = useState({
     nombre: "",
     descripcion: "",
@@ -208,6 +212,31 @@ function GroupDetail() {
 
       return [...seleccionados, participanteId];
     });
+  };
+
+  const iniciarEdicionParticipante = (participante) => {
+    setParticipanteEditando(participante.id);
+    setNotaTemporal(notasParticipantes[participante.id] || "");
+    setMensaje("");
+    setError("");
+  };
+
+  const cancelarEdicionParticipante = () => {
+    setParticipanteEditando(null);
+    setNotaTemporal("");
+    setMensaje("");
+    setError("");
+  };
+
+  const guardarEdicionParticipante = (participanteId) => {
+    setNotasParticipantes({
+      ...notasParticipantes,
+      [participanteId]: notaTemporal.trim(),
+    });
+
+    setParticipanteEditando(null);
+    setNotaTemporal("");
+    setMensaje("Información del participante actualizada correctamente.");
   };
 
   const agregarParticipante = async () => {
@@ -492,23 +521,85 @@ function GroupDetail() {
                           {grupo.participantes.map((participante) => (
                             <div
                               key={participante.id}
-                              className="d-flex justify-content-between align-items-center border rounded p-3 mb-2"
+                              className="border rounded p-3 mb-2"
                             >
-                              <div>
-                                <strong>{participante.nombre_completo}</strong>
-                                <br />
-                                <small className="text-muted">
-                                  Usuario: @{participante.username}
-                                </small>
-                                <br />
-                                <small className="text-muted">
-                                  Correo: {participante.email || "No registrado"}
-                                </small>
+                              <div className="d-flex justify-content-between align-items-start">
+                                <div>
+                                  <strong>{participante.nombre_completo}</strong>
+                                  <br />
+                                  <small className="text-muted">
+                                    Usuario: @{participante.username}
+                                  </small>
+                                  <br />
+                                  <small className="text-muted">
+                                    Correo:{" "}
+                                    {participante.email || "No registrado"}
+                                  </small>
+
+                                  {notasParticipantes[participante.id] && (
+                                    <>
+                                      <br />
+                                      <small className="text-muted">
+                                        Nota/Rol:{" "}
+                                        {notasParticipantes[participante.id]}
+                                      </small>
+                                    </>
+                                  )}
+                                </div>
+
+                                <div className="d-flex gap-2 align-items-center">
+                                  <span className="badge bg-light text-dark">
+                                    Participante
+                                  </span>
+
+                                  <button
+                                    className="btn btn-outline-primary btn-sm"
+                                    onClick={() =>
+                                      iniciarEdicionParticipante(participante)
+                                    }
+                                  >
+                                    Editar
+                                  </button>
+                                </div>
                               </div>
 
-                              <span className="badge bg-light text-dark">
-                                Participante
-                              </span>
+                              {participanteEditando === participante.id && (
+                                <div className="mt-3">
+                                  <label className="form-label">
+                                    Nota o rol del participante
+                                  </label>
+
+                                  <input
+                                    type="text"
+                                    className="form-control"
+                                    placeholder="Ej: Responsable de pagos, amigo, compañero..."
+                                    value={notaTemporal}
+                                    onChange={(e) =>
+                                      setNotaTemporal(e.target.value)
+                                    }
+                                  />
+
+                                  <div className="d-flex gap-2 mt-3">
+                                    <button
+                                      className="btn btn-outline-secondary btn-sm"
+                                      onClick={cancelarEdicionParticipante}
+                                    >
+                                      Cancelar
+                                    </button>
+
+                                    <button
+                                      className="btn btn-primary btn-sm"
+                                      onClick={() =>
+                                        guardarEdicionParticipante(
+                                          participante.id
+                                        )
+                                      }
+                                    >
+                                      Guardar
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -639,8 +730,9 @@ function GroupDetail() {
 
                     <div className="create-group-footer mt-4">
                       <small>
-                        ⓘ Puedes agregar usuarios registrados como participantes
-                        del grupo.
+                        ⓘ Puedes editar una nota o rol visual del participante.
+                        El registro definitivo se conectará cuando exista el
+                        módulo completo de participantes.
                       </small>
 
                       <button
