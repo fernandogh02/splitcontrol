@@ -7,6 +7,9 @@ function GroupDetail() {
   const { id } = useParams();
 
   const [grupo, setGrupo] = useState(null);
+  const [usuarios, setUsuarios] = useState([]);
+  const [usuarioSeleccionado, setUsuarioSeleccionado] = useState("");
+
   const [formData, setFormData] = useState({
     nombre: "",
     descripcion: "",
@@ -15,6 +18,7 @@ function GroupDetail() {
   const [cargando, setCargando] = useState(true);
   const [guardando, setGuardando] = useState(false);
   const [modoEdicion, setModoEdicion] = useState(false);
+  const [agregandoParticipante, setAgregandoParticipante] = useState(false);
   const [mensaje, setMensaje] = useState("");
   const [error, setError] = useState("");
 
@@ -60,6 +64,36 @@ function GroupDetail() {
 
     obtenerDetalleGrupo();
   }, [id]);
+
+  useEffect(() => {
+    const obtenerUsuarios = async () => {
+      const token = localStorage.getItem("access");
+
+      if (!token) {
+        return;
+      }
+
+      try {
+        const response = await fetch("http://127.0.0.1:8000/api/usuarios/", {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("No se pudieron cargar los usuarios.");
+        }
+
+        const data = await response.json();
+        setUsuarios(data);
+      } catch (error) {
+        console.error("Error al cargar usuarios:", error);
+      }
+    };
+
+    obtenerUsuarios();
+  }, []);
 
   const handleChange = (e) => {
     setFormData({
@@ -129,40 +163,89 @@ function GroupDetail() {
   };
 
   const eliminarGrupo = async () => {
-  const confirmar = window.confirm(
-    "¿Estás segura de que deseas eliminar este grupo? Esta acción no se puede deshacer."
-  );
+    const confirmar = window.confirm(
+      "¿Estás segura de que deseas eliminar este grupo? Esta acción no se puede deshacer."
+    );
 
-  if (!confirmar) {
-    return;
-  }
-
-  setMensaje("");
-  setError("");
-
-  const token = localStorage.getItem("access");
-
-  if (!token) {
-    setError("Tu sesión ha expirado. Inicia sesión nuevamente.");
-    return;
-  }
-
-  try {
-    const response = await fetch(`http://127.0.0.1:8000/api/grupos/${id}/`, {
-      method: "DELETE",
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error("No se pudo eliminar el grupo.");
+    if (!confirmar) {
+      return;
     }
 
-    navigate("/dashboard");
-  } catch (error) {
-    setError("No se pudo eliminar el grupo. Intenta nuevamente.");
-  }
+    setMensaje("");
+    setError("");
+
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setError("Tu sesión ha expirado. Inicia sesión nuevamente.");
+      return;
+    }
+
+    try {
+      const response = await fetch(`http://127.0.0.1:8000/api/grupos/${id}/`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error("No se pudo eliminar el grupo.");
+      }
+
+      navigate("/dashboard");
+    } catch (error) {
+      setError("No se pudo eliminar el grupo. Intenta nuevamente.");
+    }
+  };
+
+  const agregarParticipante = async () => {
+    setMensaje("");
+    setError("");
+
+    if (!usuarioSeleccionado) {
+      setError("Selecciona un usuario para agregarlo al grupo.");
+      return;
+    }
+
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setError("Tu sesión ha expirado. Inicia sesión nuevamente.");
+      return;
+    }
+
+    try {
+      setAgregandoParticipante(true);
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/participantes/`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            usuario_id: usuarioSeleccionado,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo agregar el participante.");
+      }
+
+      setGrupo(data.grupo);
+      setUsuarioSeleccionado("");
+      setMensaje("Participante agregado correctamente.");
+    } catch (error) {
+      setError(error.message || "No se pudo agregar el participante.");
+    } finally {
+      setAgregandoParticipante(false);
+    }
   };
 
   const handleLogout = () => {
@@ -253,9 +336,7 @@ function GroupDetail() {
           <>
             <header className="create-group-header">
               <h1>{grupo.nombre}</h1>
-              <p>
-                Revisa y administra la información general del grupo.
-              </p>
+              <p>Revisa y administra la información general del grupo.</p>
             </header>
 
             <section className="create-group-grid">
@@ -265,25 +346,25 @@ function GroupDetail() {
 
                   {!modoEdicion && (
                     <div className="d-flex gap-2">
-                    <button
-                          className="btn btn-outline-primary"
+                      <button
+                        className="btn btn-outline-primary"
                         onClick={() => {
-                       setModoEdicion(true);
-                            setMensaje("");
+                          setModoEdicion(true);
+                          setMensaje("");
                           setError("");
-                                  }}
-                               >
-                              Editar grupo
-                                 </button>
+                        }}
+                      >
+                        Editar grupo
+                      </button>
 
-                                 <button
-                                       className="btn btn-outline-danger"
-                             onClick={eliminarGrupo}
-                             >
-                                  Eliminar grupo
-                                       </button>
-                                    </div>
-                          )}
+                      <button
+                        className="btn btn-outline-danger"
+                        onClick={eliminarGrupo}
+                      >
+                        Eliminar grupo
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {mensaje && (
@@ -384,9 +465,79 @@ function GroupDetail() {
                       </div>
                     </div>
 
+                    <div className="mt-4">
+                      <h5>Participantes del grupo</h5>
+
+                      {grupo.participantes && grupo.participantes.length > 0 ? (
+                        <div className="mt-3">
+                          {grupo.participantes.map((participante) => (
+                            <div
+                              key={participante.id}
+                              className="d-flex justify-content-between align-items-center border rounded p-2 mb-2"
+                            >
+                              <div>
+                                <strong>{participante.nombre_completo}</strong>
+                                <br />
+                                <small>@{participante.username}</small>
+                              </div>
+
+                              <span className="badge bg-light text-dark">
+                                Participante
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-muted">
+                          Todavía no hay participantes agregados.
+                        </p>
+                      )}
+
+                      <div className="mt-4">
+                        <label className="form-label">Agregar participante</label>
+
+                        <div className="d-flex gap-2">
+                          <select
+                            className="form-control"
+                            value={usuarioSeleccionado}
+                            onChange={(e) =>
+                              setUsuarioSeleccionado(e.target.value)
+                            }
+                          >
+                            <option value="">
+                              Selecciona un usuario registrado
+                            </option>
+
+                            {usuarios
+                              .filter(
+                                (usuario) =>
+                                  !grupo.participantes?.some(
+                                    (participante) =>
+                                      participante.id === usuario.id
+                                  )
+                              )
+                              .map((usuario) => (
+                                <option key={usuario.id} value={usuario.id}>
+                                  {usuario.nombre_completo} (@{usuario.username})
+                                </option>
+                              ))}
+                          </select>
+
+                          <button
+                            className="btn btn-primary"
+                            onClick={agregarParticipante}
+                            disabled={agregandoParticipante}
+                          >
+                            {agregandoParticipante ? "Agregando..." : "Agregar"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="create-group-footer mt-4">
                       <small>
-                        ⓘ La gestión de participantes se implementará en la siguiente historia.
+                        ⓘ Puedes agregar usuarios registrados como participantes
+                        del grupo.
                       </small>
 
                       <button
@@ -405,7 +556,7 @@ function GroupDetail() {
                   <h4>Próximas funciones</h4>
 
                   <ul>
-                    <li>Añadir participantes al grupo.</li>
+                    <li>Seleccionar participantes para un gasto.</li>
                     <li>Registrar gastos compartidos.</li>
                     <li>Consultar balances entre participantes.</li>
                   </ul>
