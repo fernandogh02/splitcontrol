@@ -90,3 +90,50 @@ class AddParticipantView(APIView):
             },
             status=status.HTTP_200_OK
         )
+    
+class RemoveParticipantView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, pk, usuario_id):
+        grupo = Group.objects.filter(
+            id=pk,
+            creador=request.user
+        ).first()
+
+        if not grupo:
+            return Response(
+                {"error": "Grupo no encontrado."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        usuario = User.objects.filter(id=usuario_id).first()
+
+        if not usuario:
+            return Response(
+                {"error": "Usuario no encontrado."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if usuario == grupo.creador:
+            return Response(
+                {"error": "No puedes eliminar al creador del grupo."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if not grupo.participantes.filter(id=usuario.id).exists():
+            return Response(
+                {"error": "El usuario no pertenece a este grupo."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        grupo.participantes.remove(usuario)
+
+        serializer = GroupSerializer(grupo)
+
+        return Response(
+            {
+                "mensaje": "Participante eliminado correctamente.",
+                "grupo": serializer.data
+            },
+            status=status.HTTP_200_OK
+        )

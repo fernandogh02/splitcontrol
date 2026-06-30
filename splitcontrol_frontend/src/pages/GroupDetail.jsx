@@ -9,6 +9,11 @@ function GroupDetail() {
   const [grupo, setGrupo] = useState(null);
   const [usuarios, setUsuarios] = useState([]);
   const [usuarioSeleccionado, setUsuarioSeleccionado] = useState("");
+  const [participantesGasto, setParticipantesGasto] = useState([]);
+
+  const [participanteEditando, setParticipanteEditando] = useState(null);
+  const [notaTemporal, setNotaTemporal] = useState("");
+  const [notasParticipantes, setNotasParticipantes] = useState({});
 
   const [formData, setFormData] = useState({
     nombre: "",
@@ -199,6 +204,41 @@ function GroupDetail() {
     }
   };
 
+  const alternarParticipanteGasto = (participanteId) => {
+    setParticipantesGasto((seleccionados) => {
+      if (seleccionados.includes(participanteId)) {
+        return seleccionados.filter((item) => item !== participanteId);
+      }
+
+      return [...seleccionados, participanteId];
+    });
+  };
+
+  const iniciarEdicionParticipante = (participante) => {
+    setParticipanteEditando(participante.id);
+    setNotaTemporal(notasParticipantes[participante.id] || "");
+    setMensaje("");
+    setError("");
+  };
+
+  const cancelarEdicionParticipante = () => {
+    setParticipanteEditando(null);
+    setNotaTemporal("");
+    setMensaje("");
+    setError("");
+  };
+
+  const guardarEdicionParticipante = (participanteId) => {
+    setNotasParticipantes({
+      ...notasParticipantes,
+      [participanteId]: notaTemporal.trim(),
+    });
+
+    setParticipanteEditando(null);
+    setNotaTemporal("");
+    setMensaje("Información del participante actualizada correctamente.");
+  };
+
   const agregarParticipante = async () => {
     setMensaje("");
     setError("");
@@ -245,6 +285,62 @@ function GroupDetail() {
       setError(error.message || "No se pudo agregar el participante.");
     } finally {
       setAgregandoParticipante(false);
+    }
+  };
+
+  const eliminarParticipante = async (participanteId) => {
+    const confirmar = window.confirm(
+      "¿Deseas eliminar este participante del grupo?"
+    );
+
+    if (!confirmar) {
+      return;
+    }
+
+    setMensaje("");
+    setError("");
+
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setError("Tu sesión ha expirado. Inicia sesión nuevamente.");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/participantes/${participanteId}/`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo eliminar el participante.");
+      }
+
+      setGrupo(data.grupo);
+
+      setParticipantesGasto((seleccionados) =>
+        seleccionados.filter((item) => item !== participanteId)
+      );
+
+      setNotasParticipantes((notasActuales) => {
+        const nuevasNotas = { ...notasActuales };
+        delete nuevasNotas[participanteId];
+        return nuevasNotas;
+      });
+
+      setParticipanteEditando(null);
+      setNotaTemporal("");
+      setMensaje("Participante eliminado correctamente.");
+    } catch (error) {
+      setError(error.message || "No se pudo eliminar el participante.");
     }
   };
 
@@ -466,35 +562,126 @@ function GroupDetail() {
                     </div>
 
                     <div className="mt-4">
-                      <h5>Participantes del grupo</h5>
+                      <div className="d-flex justify-content-between align-items-center">
+                        <div>
+                          <h5 className="mb-1">Participantes del grupo</h5>
+                          <small className="text-muted">
+                            Total de participantes:{" "}
+                            {grupo.participantes?.length || 0}
+                          </small>
+                        </div>
+                      </div>
 
                       {grupo.participantes && grupo.participantes.length > 0 ? (
                         <div className="mt-3">
                           {grupo.participantes.map((participante) => (
                             <div
                               key={participante.id}
-                              className="d-flex justify-content-between align-items-center border rounded p-2 mb-2"
+                              className="border rounded p-3 mb-2"
                             >
-                              <div>
-                                <strong>{participante.nombre_completo}</strong>
-                                <br />
-                                <small>@{participante.username}</small>
+                              <div className="d-flex justify-content-between align-items-start">
+                                <div>
+                                  <strong>{participante.nombre_completo}</strong>
+                                  <br />
+                                  <small className="text-muted">
+                                    Usuario: @{participante.username}
+                                  </small>
+                                  <br />
+                                  <small className="text-muted">
+                                    Correo:{" "}
+                                    {participante.email || "No registrado"}
+                                  </small>
+
+                                  {notasParticipantes[participante.id] && (
+                                    <>
+                                      <br />
+                                      <small className="text-muted">
+                                        Nota/Rol:{" "}
+                                        {notasParticipantes[participante.id]}
+                                      </small>
+                                    </>
+                                  )}
+                                </div>
+
+                                <div className="d-flex gap-2 align-items-center">
+                                  <span className="badge bg-light text-dark">
+                                    Participante
+                                  </span>
+
+                                  <button
+                                    className="btn btn-outline-primary btn-sm"
+                                    onClick={() =>
+                                      iniciarEdicionParticipante(participante)
+                                    }
+                                  >
+                                    Editar
+                                  </button>
+
+                                  <button
+                                    className="btn btn-outline-danger btn-sm"
+                                    onClick={() =>
+                                      eliminarParticipante(participante.id)
+                                    }
+                                  >
+                                    Eliminar
+                                  </button>
+                                </div>
                               </div>
 
-                              <span className="badge bg-light text-dark">
-                                Participante
-                              </span>
+                              {participanteEditando === participante.id && (
+                                <div className="mt-3">
+                                  <label className="form-label">
+                                    Nota o rol del participante
+                                  </label>
+
+                                  <input
+                                    type="text"
+                                    className="form-control"
+                                    placeholder="Ej: Responsable de pagos, amigo, compañero..."
+                                    value={notaTemporal}
+                                    onChange={(e) =>
+                                      setNotaTemporal(e.target.value)
+                                    }
+                                  />
+
+                                  <div className="d-flex gap-2 mt-3">
+                                    <button
+                                      className="btn btn-outline-secondary btn-sm"
+                                      onClick={cancelarEdicionParticipante}
+                                    >
+                                      Cancelar
+                                    </button>
+
+                                    <button
+                                      className="btn btn-primary btn-sm"
+                                      onClick={() =>
+                                        guardarEdicionParticipante(
+                                          participante.id
+                                        )
+                                      }
+                                    >
+                                      Guardar
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>
                       ) : (
-                        <p className="text-muted">
-                          Todavía no hay participantes agregados.
-                        </p>
+                        <div className="empty-groups-card mt-3">
+                          <h5>No hay participantes todavía</h5>
+                          <p>
+                            Agrega usuarios registrados para que formen parte de
+                            este grupo.
+                          </p>
+                        </div>
                       )}
 
                       <div className="mt-4">
-                        <label className="form-label">Agregar participante</label>
+                        <label className="form-label">
+                          Agregar participante
+                        </label>
 
                         <div className="d-flex gap-2">
                           <select
@@ -518,7 +705,8 @@ function GroupDetail() {
                               )
                               .map((usuario) => (
                                 <option key={usuario.id} value={usuario.id}>
-                                  {usuario.nombre_completo} (@{usuario.username})
+                                  {usuario.nombre_completo} (@
+                                  {usuario.username})
                                 </option>
                               ))}
                           </select>
@@ -528,16 +716,88 @@ function GroupDetail() {
                             onClick={agregarParticipante}
                             disabled={agregandoParticipante}
                           >
-                            {agregandoParticipante ? "Agregando..." : "Agregar"}
+                            {agregandoParticipante
+                              ? "Agregando..."
+                              : "Agregar"}
                           </button>
                         </div>
+                      </div>
+
+                      <div className="mt-5">
+                        <div className="d-flex justify-content-between align-items-center">
+                          <div>
+                            <h5 className="mb-1">
+                              Seleccionar participantes para un gasto
+                            </h5>
+                            <small className="text-muted">
+                              Participantes seleccionados:{" "}
+                              {participantesGasto.length}
+                            </small>
+                          </div>
+                        </div>
+
+                        {grupo.participantes &&
+                        grupo.participantes.length > 0 ? (
+                          <div className="mt-3">
+                            {grupo.participantes.map((participante) => (
+                              <label
+                                key={participante.id}
+                                className="d-flex justify-content-between align-items-center border rounded p-3 mb-2"
+                                style={{ cursor: "pointer" }}
+                              >
+                                <div className="d-flex align-items-center gap-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={participantesGasto.includes(
+                                      participante.id
+                                    )}
+                                    onChange={() =>
+                                      alternarParticipanteGasto(participante.id)
+                                    }
+                                  />
+
+                                  <div>
+                                    <strong>
+                                      {participante.nombre_completo}
+                                    </strong>
+                                    <br />
+                                    <small className="text-muted">
+                                      @{participante.username}
+                                    </small>
+                                  </div>
+                                </div>
+
+                                <span className="badge bg-light text-dark">
+                                  Para gasto
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="empty-groups-card mt-3">
+                            <h5>No hay participantes disponibles</h5>
+                            <p>
+                              Primero agrega participantes al grupo para poder
+                              seleccionarlos en un gasto.
+                            </p>
+                          </div>
+                        )}
+
+                        {participantesGasto.length > 0 && (
+                          <div className="alert alert-info mt-3" role="alert">
+                            Selección preparada para un futuro registro de gasto.
+                            Esta información todavía no se guarda porque el
+                            módulo de gastos se implementará después.
+                          </div>
+                        )}
                       </div>
                     </div>
 
                     <div className="create-group-footer mt-4">
                       <small>
-                        ⓘ Puedes agregar usuarios registrados como participantes
-                        del grupo.
+                        ⓘ Puedes administrar los participantes del grupo. La
+                        selección para gastos quedará conectada cuando se
+                        implemente el módulo completo de gastos.
                       </small>
 
                       <button
@@ -556,8 +816,8 @@ function GroupDetail() {
                   <h4>Próximas funciones</h4>
 
                   <ul>
-                    <li>Seleccionar participantes para un gasto.</li>
                     <li>Registrar gastos compartidos.</li>
+                    <li>Guardar selección de participantes en un gasto.</li>
                     <li>Consultar balances entre participantes.</li>
                   </ul>
                 </div>

@@ -5,6 +5,7 @@ from .views import (
     GroupDetailView,
     UserListView,
     AddParticipantView,
+    RemoveParticipantView,
 )
 
 urlpatterns = [
@@ -16,5 +17,10 @@ urlpatterns = [
         "grupos/<int:pk>/participantes/",
         AddParticipantView.as_view(),
         name="agregar_participante"
+    ),
+    path(
+        "grupos/<int:pk>/participantes/<int:usuario_id>/",
+        RemoveParticipantView.as_view(),
+        name="eliminar_participante"
     ),
 ]
