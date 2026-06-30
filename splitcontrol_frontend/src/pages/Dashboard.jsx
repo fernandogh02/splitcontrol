@@ -4,15 +4,47 @@ import logo from "../assets/splitcontrol-logo.png";
 
 function Dashboard() {
   const navigate = useNavigate();
+
   const [grupos, setGrupos] = useState([]);
+  const [cargandoGrupos, setCargandoGrupos] = useState(true);
+  const [errorGrupos, setErrorGrupos] = useState("");
 
   const username = localStorage.getItem("username") || "usuario";
   const displayName = username.charAt(0).toUpperCase() + username.slice(1);
   const avatarLetter = username.charAt(0).toUpperCase();
 
   useEffect(() => {
-    const gruposGuardados = JSON.parse(localStorage.getItem("grupos")) || [];
-    setGrupos(gruposGuardados);
+    const obtenerGrupos = async () => {
+      const token = localStorage.getItem("access");
+
+      if (!token) {
+        setErrorGrupos("Tu sesión ha expirado. Inicia sesión nuevamente.");
+        setCargandoGrupos(false);
+        return;
+      }
+
+      try {
+        const response = await fetch("http://127.0.0.1:8000/api/grupos/", {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("No se pudieron cargar los grupos.");
+        }
+
+        const data = await response.json();
+        setGrupos(data);
+      } catch (error) {
+        setErrorGrupos("No se pudieron cargar tus grupos.");
+      } finally {
+        setCargandoGrupos(false);
+      }
+    };
+
+    obtenerGrupos();
   }, []);
 
   const handleLogout = () => {
@@ -137,7 +169,21 @@ function Dashboard() {
               </button>
             </div>
 
-            {grupos.length === 0 ? (
+            {cargandoGrupos ? (
+              <div className="empty-groups-card">
+                <h5>Cargando grupos...</h5>
+                <p>Estamos consultando tus grupos guardados.</p>
+              </div>
+            ) : errorGrupos ? (
+              <div className="empty-groups-card">
+                <h5>No se pudieron cargar los grupos</h5>
+                <p>{errorGrupos}</p>
+
+                <button className="btn btn-primary" onClick={goToCreateGroup}>
+                  Crear grupo
+                </button>
+              </div>
+            ) : grupos.length === 0 ? (
               <div className="empty-groups-card">
                 <h5>No tienes grupos creados todavía</h5>
                 <p>
@@ -150,13 +196,23 @@ function Dashboard() {
               </div>
             ) : (
               grupos.map((grupo) => (
-                <div className="group-card" key={grupo.id}>
+                <div
+                  className="group-card"
+                  key={grupo.id}
+                  onClick={() => navigate(`/grupos/${grupo.id}`)}
+                  style={{ cursor: "pointer" }}
+                >
                   <div className="group-image beach"></div>
 
                   <div className="group-info">
                     <strong>{grupo.nombre}</strong>
-                    <small>Creado el {grupo.fecha}</small>
-                    <span>{grupo.descripcion}</span>
+                    <small>
+                      Creado el{" "}
+                      {grupo.fecha_creacion
+                        ? new Date(grupo.fecha_creacion).toLocaleDateString()
+                        : "Sin fecha"}
+                    </small>
+                    <span>{grupo.descripcion || "Sin descripción"}</span>
                   </div>
 
                   <strong className="amount neutral">€0.00</strong>

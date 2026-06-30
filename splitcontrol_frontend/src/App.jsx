@@ -5,6 +5,7 @@ import Dashboard from "./pages/Dashboard";
 import CreateGroup from "./pages/CreateGroup";
 import ExpenseSummary from "./pages/ExpenseSummary";
 import PrivateRoute from "./components/PrivateRoute";
+import GroupDetail from "./pages/GroupDetail";
 import "./App.css";
 
 function App() {
@@ -42,6 +43,16 @@ function App() {
             </PrivateRoute>
           }
         />
+
+        <Route
+          path="/grupos/:id"
+           element={
+             <PrivateRoute>
+                <GroupDetail />
+              </PrivateRoute>
+          }
+        />
+
       </Routes>
     </BrowserRouter>
   );
