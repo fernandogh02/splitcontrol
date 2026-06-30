@@ -466,19 +466,33 @@ function GroupDetail() {
                     </div>
 
                     <div className="mt-4">
-                      <h5>Participantes del grupo</h5>
+                      <div className="d-flex justify-content-between align-items-center">
+                        <div>
+                          <h5 className="mb-1">Participantes del grupo</h5>
+                          <small className="text-muted">
+                            Total de participantes:{" "}
+                            {grupo.participantes?.length || 0}
+                          </small>
+                        </div>
+                      </div>
 
                       {grupo.participantes && grupo.participantes.length > 0 ? (
                         <div className="mt-3">
                           {grupo.participantes.map((participante) => (
                             <div
                               key={participante.id}
-                              className="d-flex justify-content-between align-items-center border rounded p-2 mb-2"
+                              className="d-flex justify-content-between align-items-center border rounded p-3 mb-2"
                             >
                               <div>
                                 <strong>{participante.nombre_completo}</strong>
                                 <br />
-                                <small>@{participante.username}</small>
+                                <small className="text-muted">
+                                  Usuario: @{participante.username}
+                                </small>
+                                <br />
+                                <small className="text-muted">
+                                  Correo: {participante.email || "No registrado"}
+                                </small>
                               </div>
 
                               <span className="badge bg-light text-dark">
@@ -488,13 +502,19 @@ function GroupDetail() {
                           ))}
                         </div>
                       ) : (
-                        <p className="text-muted">
-                          Todavía no hay participantes agregados.
-                        </p>
+                        <div className="empty-groups-card mt-3">
+                          <h5>No hay participantes todavía</h5>
+                          <p>
+                            Agrega usuarios registrados para que formen parte de
+                            este grupo.
+                          </p>
+                        </div>
                       )}
 
                       <div className="mt-4">
-                        <label className="form-label">Agregar participante</label>
+                        <label className="form-label">
+                          Agregar participante
+                        </label>
 
                         <div className="d-flex gap-2">
                           <select
@@ -518,7 +538,8 @@ function GroupDetail() {
                               )
                               .map((usuario) => (
                                 <option key={usuario.id} value={usuario.id}>
-                                  {usuario.nombre_completo} (@{usuario.username})
+                                  {usuario.nombre_completo} (@
+                                  {usuario.username})
                                 </option>
                               ))}
                           </select>
@@ -528,7 +549,9 @@ function GroupDetail() {
                             onClick={agregarParticipante}
                             disabled={agregandoParticipante}
                           >
-                            {agregandoParticipante ? "Agregando..." : "Agregar"}
+                            {agregandoParticipante
+                              ? "Agregando..."
+                              : "Agregar"}
                           </button>
                         </div>
                       </div>
