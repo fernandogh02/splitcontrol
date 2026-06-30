@@ -14,6 +14,8 @@ function CreateGroup() {
   });
 
   const [mensaje, setMensaje] = useState("");
+  const [error, setError] = useState("");
+  const [cargando, setCargando] = useState(false);
 
   const handleChange = (e) => {
     setFormData({
@@ -22,33 +24,53 @@ function CreateGroup() {
     });
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
-    const nuevoGrupo = {
-      id: Date.now(),
-      nombre: formData.nombre,
-      descripcion: formData.descripcion,
-      fecha: new Date().toLocaleDateString(),
-    };
+    setMensaje("");
+    setError("");
 
-    const gruposGuardados = JSON.parse(localStorage.getItem("grupos")) || [];
+    const token = localStorage.getItem("access");
 
-    localStorage.setItem(
-      "grupos",
-      JSON.stringify([...gruposGuardados, nuevoGrupo])
-    );
+    if (!token) {
+      setError("Tu sesión ha expirado. Inicia sesión nuevamente.");
+      return;
+    }
 
-    setMensaje("Grupo creado correctamente.");
+    try {
+      setCargando(true);
 
-    setFormData({
-      nombre: "",
-      descripcion: "",
-    });
+      const response = await fetch("http://127.0.0.1:8000/api/grupos/", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          nombre: formData.nombre,
+          descripcion: formData.descripcion,
+        }),
+      });
 
-    setTimeout(() => {
-      navigate("/dashboard");
-    }, 1000);
+      if (!response.ok) {
+        throw new Error("No se pudo crear el grupo.");
+      }
+
+      setMensaje("Grupo creado correctamente.");
+
+      setFormData({
+        nombre: "",
+        descripcion: "",
+      });
+
+      setTimeout(() => {
+        navigate("/dashboard");
+      }, 1000);
+    } catch (error) {
+      setError("No se pudo crear el grupo. Revisa el backend o intenta nuevamente.");
+    } finally {
+      setCargando(false);
+    }
   };
 
   const handleLogout = () => {
@@ -84,13 +106,13 @@ function CreateGroup() {
           <button className="btn btn-primary w-100 mb-3">Registrar pago</button>
 
           <div className="user-box">
-  <div className="avatar">{avatarLetter}</div>
+            <div className="avatar">{avatarLetter}</div>
 
-                 <div>
-                 <strong>{displayName}</strong>
-                 <small>@{username}</small>
-                </div>
+            <div>
+              <strong>{displayName}</strong>
+              <small>@{username}</small>
             </div>
+          </div>
 
           <button
             className="btn btn-outline-danger w-100 mt-3"
@@ -133,6 +155,12 @@ function CreateGroup() {
               </div>
             )}
 
+            {error && (
+              <div className="alert alert-danger text-center" role="alert">
+                {error}
+              </div>
+            )}
+
             <form onSubmit={handleSubmit}>
               <div className="mb-3">
                 <label className="form-label">Nombre del grupo</label>
@@ -165,8 +193,12 @@ function CreateGroup() {
                   ⓘ Podrás añadir participantes en el siguiente paso.
                 </small>
 
-                <button type="submit" className="btn btn-primary">
-                  Crear grupo
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={cargando}
+                >
+                  {cargando ? "Creando..." : "Crear grupo"}
                 </button>
               </div>
             </form>
@@ -181,13 +213,6 @@ function CreateGroup() {
                 <li>Recordatorios de pago amigables sin estrés.</li>
                 <li>Reportes de gastos mensuales detallados.</li>
               </ul>
-            </div>
-
-            <div className="promo-card">
-              <p>
-                Únete a más de 10,000 grupos que ya gestionan sus gastos con
-                SplitControl.
-              </p>
             </div>
           </aside>
         </section>
