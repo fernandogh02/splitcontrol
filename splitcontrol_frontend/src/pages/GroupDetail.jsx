@@ -288,6 +288,62 @@ function GroupDetail() {
     }
   };
 
+  const eliminarParticipante = async (participanteId) => {
+    const confirmar = window.confirm(
+      "¿Deseas eliminar este participante del grupo?"
+    );
+
+    if (!confirmar) {
+      return;
+    }
+
+    setMensaje("");
+    setError("");
+
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setError("Tu sesión ha expirado. Inicia sesión nuevamente.");
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/participantes/${participanteId}/`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "No se pudo eliminar el participante.");
+      }
+
+      setGrupo(data.grupo);
+
+      setParticipantesGasto((seleccionados) =>
+        seleccionados.filter((item) => item !== participanteId)
+      );
+
+      setNotasParticipantes((notasActuales) => {
+        const nuevasNotas = { ...notasActuales };
+        delete nuevasNotas[participanteId];
+        return nuevasNotas;
+      });
+
+      setParticipanteEditando(null);
+      setNotaTemporal("");
+      setMensaje("Participante eliminado correctamente.");
+    } catch (error) {
+      setError(error.message || "No se pudo eliminar el participante.");
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem("access");
     localStorage.removeItem("refresh");
@@ -560,6 +616,15 @@ function GroupDetail() {
                                   >
                                     Editar
                                   </button>
+
+                                  <button
+                                    className="btn btn-outline-danger btn-sm"
+                                    onClick={() =>
+                                      eliminarParticipante(participante.id)
+                                    }
+                                  >
+                                    Eliminar
+                                  </button>
                                 </div>
                               </div>
 
@@ -730,9 +795,9 @@ function GroupDetail() {
 
                     <div className="create-group-footer mt-4">
                       <small>
-                        ⓘ Puedes editar una nota o rol visual del participante.
-                        El registro definitivo se conectará cuando exista el
-                        módulo completo de participantes.
+                        ⓘ Puedes administrar los participantes del grupo. La
+                        selección para gastos quedará conectada cuando se
+                        implemente el módulo completo de gastos.
                       </small>
 
                       <button
