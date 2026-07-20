@@ -5,6 +5,7 @@ from .views import (
     GroupDetailView,
     UserListView,
     AddParticipantView,
+    ExpenseCreateView,
     RemoveParticipantView,
 )
 
@@ -22,5 +23,10 @@ urlpatterns = [
         "grupos/<int:pk>/participantes/<int:usuario_id>/",
         RemoveParticipantView.as_view(),
         name="eliminar_participante"
+    ),
+    path(
+        "grupos/<int:pk>/gastos/",
+         ExpenseCreateView.as_view(),
+         name="registrar_gasto"
     ),
 ]

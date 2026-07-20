@@ -2,6 +2,15 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import logo from "../assets/splitcontrol-logo.png";
 
+const obtenerFechaActual = () => {
+  const fecha = new Date();
+  const diferenciaZonaHoraria = fecha.getTimezoneOffset() * 60000;
+
+  return new Date(fecha.getTime() - diferenciaZonaHoraria)
+    .toISOString()
+    .split("T")[0];
+};
+
 function GroupDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -9,7 +18,17 @@ function GroupDetail() {
   const [grupo, setGrupo] = useState(null);
   const [usuarios, setUsuarios] = useState([]);
   const [usuarioSeleccionado, setUsuarioSeleccionado] = useState("");
+
   const [participantesGasto, setParticipantesGasto] = useState([]);
+
+  const [gastoData, setGastoData] = useState({
+    descripcion: "",
+    monto: "",
+    fecha_gasto: obtenerFechaActual(),
+    pagado_por_id: "",
+  });
+
+  const [registrandoGasto, setRegistrandoGasto] = useState(false);
 
   const [participanteEditando, setParticipanteEditando] = useState(null);
   const [notaTemporal, setNotaTemporal] = useState("");
@@ -28,7 +47,8 @@ function GroupDetail() {
   const [error, setError] = useState("");
 
   const username = localStorage.getItem("username") || "usuario";
-  const displayName = username.charAt(0).toUpperCase() + username.slice(1);
+  const displayName =
+    username.charAt(0).toUpperCase() + username.slice(1);
   const avatarLetter = username.charAt(0).toUpperCase();
 
   useEffect(() => {
@@ -42,12 +62,15 @@ function GroupDetail() {
       }
 
       try {
-        const response = await fetch(`http://127.0.0.1:8000/api/grupos/${id}/`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const response = await fetch(
+          `http://127.0.0.1:8000/api/grupos/${id}/`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
 
         if (!response.ok) {
           throw new Error("No se pudo cargar el detalle del grupo.");
@@ -56,11 +79,12 @@ function GroupDetail() {
         const data = await response.json();
 
         setGrupo(data);
+
         setFormData({
           nombre: data.nombre || "",
           descripcion: data.descripcion || "",
         });
-      } catch (error) {
+      } catch {
         setError("No se pudo cargar la información del grupo.");
       } finally {
         setCargando(false);
@@ -79,12 +103,15 @@ function GroupDetail() {
       }
 
       try {
-        const response = await fetch("http://127.0.0.1:8000/api/usuarios/", {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        const response = await fetch(
+          "http://127.0.0.1:8000/api/usuarios/",
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
 
         if (!response.ok) {
           throw new Error("No se pudieron cargar los usuarios.");
@@ -92,8 +119,8 @@ function GroupDetail() {
 
         const data = await response.json();
         setUsuarios(data);
-      } catch (error) {
-        console.error("Error al cargar usuarios:", error);
+      } catch (errorUsuarios) {
+        console.error("Error al cargar usuarios:", errorUsuarios);
       }
     };
 
@@ -105,6 +132,57 @@ function GroupDetail() {
       ...formData,
       [e.target.name]: e.target.value,
     });
+  };
+
+  const handleGastoChange = (e) => {
+    setGastoData({
+      ...gastoData,
+      [e.target.name]: e.target.value,
+    });
+  };
+
+  const obtenerMensajeError = (data) => {
+    if (!data || typeof data !== "object") {
+      return "No se pudo registrar el gasto.";
+    }
+
+    if (data.error) {
+      return data.error;
+    }
+
+    if (data.detail) {
+      return data.detail;
+    }
+
+    const primeraClave = Object.keys(data)[0];
+
+    if (!primeraClave) {
+      return "No se pudo registrar el gasto.";
+    }
+
+    const detalle = data[primeraClave];
+
+    if (Array.isArray(detalle)) {
+      return detalle[0];
+    }
+
+    if (typeof detalle === "object" && detalle !== null) {
+      const subClave = Object.keys(detalle)[0];
+
+      if (!subClave) {
+        return "No se pudo registrar el gasto.";
+      }
+
+      const subDetalle = detalle[subClave];
+
+      if (Array.isArray(subDetalle)) {
+        return subDetalle[0];
+      }
+
+      return String(subDetalle);
+    }
+
+    return String(detalle);
   };
 
   const guardarCambios = async (e) => {
@@ -123,17 +201,20 @@ function GroupDetail() {
     try {
       setGuardando(true);
 
-      const response = await fetch(`http://127.0.0.1:8000/api/grupos/${id}/`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          nombre: formData.nombre,
-          descripcion: formData.descripcion,
-        }),
-      });
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            nombre: formData.nombre,
+            descripcion: formData.descripcion,
+          }),
+        }
+      );
 
       if (!response.ok) {
         throw new Error("No se pudo actualizar el grupo.");
@@ -142,6 +223,7 @@ function GroupDetail() {
       const data = await response.json();
 
       setGrupo(data);
+
       setFormData({
         nombre: data.nombre || "",
         descripcion: data.descripcion || "",
@@ -149,7 +231,7 @@ function GroupDetail() {
 
       setModoEdicion(false);
       setMensaje("Grupo actualizado correctamente.");
-    } catch (error) {
+    } catch {
       setError("No se pudo actualizar el grupo. Intenta nuevamente.");
     } finally {
       setGuardando(false);
@@ -169,7 +251,7 @@ function GroupDetail() {
 
   const eliminarGrupo = async () => {
     const confirmar = window.confirm(
-      "¿Estás segura de que deseas eliminar este grupo? Esta acción no se puede deshacer."
+      "¿Estás seguro de que deseas eliminar este grupo? Esta acción no se puede deshacer."
     );
 
     if (!confirmar) {
@@ -187,19 +269,22 @@ function GroupDetail() {
     }
 
     try {
-      const response = await fetch(`http://127.0.0.1:8000/api/grupos/${id}/`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
 
       if (!response.ok) {
         throw new Error("No se pudo eliminar el grupo.");
       }
 
       navigate("/dashboard");
-    } catch (error) {
+    } catch {
       setError("No se pudo eliminar el grupo. Intenta nuevamente.");
     }
   };
@@ -207,16 +292,114 @@ function GroupDetail() {
   const alternarParticipanteGasto = (participanteId) => {
     setParticipantesGasto((seleccionados) => {
       if (seleccionados.includes(participanteId)) {
-        return seleccionados.filter((item) => item !== participanteId);
+        return seleccionados.filter(
+          (item) => item !== participanteId
+        );
       }
 
       return [...seleccionados, participanteId];
     });
   };
 
+  const registrarGasto = async (e) => {
+    e.preventDefault();
+
+    setMensaje("");
+    setError("");
+
+    if (!gastoData.descripcion.trim()) {
+      setError("Escribe una descripción para el gasto.");
+      return;
+    }
+
+    if (!gastoData.monto || Number(gastoData.monto) <= 0) {
+      setError("El monto debe ser mayor que cero.");
+      return;
+    }
+
+    if (!gastoData.fecha_gasto) {
+      setError("Selecciona la fecha del gasto.");
+      return;
+    }
+
+    if (!gastoData.pagado_por_id) {
+      setError("Selecciona quién pagó el gasto.");
+      return;
+    }
+
+    if (participantesGasto.length === 0) {
+      setError(
+        "Selecciona al menos un participante para el gasto."
+      );
+      return;
+    }
+
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setError("Tu sesión ha expirado. Inicia sesión nuevamente.");
+      return;
+    }
+
+    try {
+      setRegistrandoGasto(true);
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/gastos/`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            descripcion: gastoData.descripcion.trim(),
+            monto: gastoData.monto,
+            fecha_gasto: gastoData.fecha_gasto,
+            pagado_por_id: Number(gastoData.pagado_por_id),
+            participantes_ids: participantesGasto,
+          }),
+        }
+      );
+
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(obtenerMensajeError(data));
+      }
+
+      setGastoData({
+        descripcion: "",
+        monto: "",
+        fecha_gasto: obtenerFechaActual(),
+        pagado_por_id: "",
+      });
+
+      setParticipantesGasto([]);
+
+      setMensaje(
+        data.mensaje || "Gasto registrado correctamente."
+      );
+    } catch (errorGasto) {
+      setError(
+        errorGasto.message || "No se pudo registrar el gasto."
+      );
+    } finally {
+      setRegistrandoGasto(false);
+    }
+  };
+
   const iniciarEdicionParticipante = (participante) => {
     setParticipanteEditando(participante.id);
-    setNotaTemporal(notasParticipantes[participante.id] || "");
+    setNotaTemporal(
+      notasParticipantes[participante.id] || ""
+    );
     setMensaje("");
     setError("");
   };
@@ -236,7 +419,10 @@ function GroupDetail() {
 
     setParticipanteEditando(null);
     setNotaTemporal("");
-    setMensaje("Información del participante actualizada correctamente.");
+
+    setMensaje(
+      "Información del participante actualizada correctamente."
+    );
   };
 
   const agregarParticipante = async () => {
@@ -275,14 +461,19 @@ function GroupDetail() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "No se pudo agregar el participante.");
+        throw new Error(
+          data.error || "No se pudo agregar el participante."
+        );
       }
 
       setGrupo(data.grupo);
       setUsuarioSeleccionado("");
       setMensaje("Participante agregado correctamente.");
-    } catch (error) {
-      setError(error.message || "No se pudo agregar el participante.");
+    } catch (errorParticipante) {
+      setError(
+        errorParticipante.message ||
+          "No se pudo agregar el participante."
+      );
     } finally {
       setAgregandoParticipante(false);
     }
@@ -321,14 +512,31 @@ function GroupDetail() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "No se pudo eliminar el participante.");
+        throw new Error(
+          data.error || "No se pudo eliminar el participante."
+        );
       }
 
       setGrupo(data.grupo);
 
       setParticipantesGasto((seleccionados) =>
-        seleccionados.filter((item) => item !== participanteId)
+        seleccionados.filter(
+          (item) => item !== participanteId
+        )
       );
+
+      setGastoData((datosActuales) => {
+        if (
+          Number(datosActuales.pagado_por_id) === participanteId
+        ) {
+          return {
+            ...datosActuales,
+            pagado_por_id: "",
+          };
+        }
+
+        return datosActuales;
+      });
 
       setNotasParticipantes((notasActuales) => {
         const nuevasNotas = { ...notasActuales };
@@ -339,8 +547,11 @@ function GroupDetail() {
       setParticipanteEditando(null);
       setNotaTemporal("");
       setMensaje("Participante eliminado correctamente.");
-    } catch (error) {
-      setError(error.message || "No se pudo eliminar el participante.");
+    } catch (errorParticipante) {
+      setError(
+        errorParticipante.message ||
+          "No se pudo eliminar el participante."
+      );
     }
   };
 
@@ -367,9 +578,17 @@ function GroupDetail() {
               ▦ Dashboard
             </button>
 
-            <button className="sidebar-link active">👥 Grupos</button>
-            <button className="sidebar-link">↺ Historial</button>
-            <button className="sidebar-link">♙ Perfil</button>
+            <button className="sidebar-link active">
+              👥 Grupos
+            </button>
+
+            <button className="sidebar-link">
+              ↺ Historial
+            </button>
+
+            <button className="sidebar-link">
+              ♙ Perfil
+            </button>
           </nav>
         </div>
 
@@ -432,17 +651,24 @@ function GroupDetail() {
           <>
             <header className="create-group-header">
               <h1>{grupo.nombre}</h1>
-              <p>Revisa y administra la información general del grupo.</p>
+
+              <p>
+                Revisa y administra la información general del
+                grupo.
+              </p>
             </header>
 
             <section className="create-group-grid">
               <div className="create-group-card">
                 <div className="d-flex justify-content-between align-items-center mb-3">
-                  <h4 className="mb-0">Información del grupo</h4>
+                  <h4 className="mb-0">
+                    Información del grupo
+                  </h4>
 
                   {!modoEdicion && (
                     <div className="d-flex gap-2">
                       <button
+                        type="button"
                         className="btn btn-outline-primary"
                         onClick={() => {
                           setModoEdicion(true);
@@ -454,6 +680,7 @@ function GroupDetail() {
                       </button>
 
                       <button
+                        type="button"
                         className="btn btn-outline-danger"
                         onClick={eliminarGrupo}
                       >
@@ -464,13 +691,19 @@ function GroupDetail() {
                 </div>
 
                 {mensaje && (
-                  <div className="alert alert-success" role="alert">
+                  <div
+                    className="alert alert-success"
+                    role="alert"
+                  >
                     {mensaje}
                   </div>
                 )}
 
                 {error && (
-                  <div className="alert alert-danger" role="alert">
+                  <div
+                    className="alert alert-danger"
+                    role="alert"
+                  >
                     {error}
                   </div>
                 )}
@@ -478,7 +711,10 @@ function GroupDetail() {
                 {modoEdicion ? (
                   <form onSubmit={guardarCambios}>
                     <div className="mt-4">
-                      <label className="form-label">Nombre del grupo</label>
+                      <label className="form-label">
+                        Nombre del grupo
+                      </label>
+
                       <input
                         type="text"
                         name="nombre"
@@ -490,7 +726,10 @@ function GroupDetail() {
                     </div>
 
                     <div className="mt-3">
-                      <label className="form-label">Descripción</label>
+                      <label className="form-label">
+                        Descripción
+                      </label>
+
                       <textarea
                         name="descripcion"
                         className="form-control"
@@ -498,12 +737,13 @@ function GroupDetail() {
                         value={formData.descripcion}
                         onChange={handleChange}
                         required
-                      ></textarea>
+                      />
                     </div>
 
                     <div className="create-group-footer mt-4">
                       <small>
-                        ⓘ Los cambios se guardarán en la base de datos.
+                        ⓘ Los cambios se guardarán en la base de
+                        datos.
                       </small>
 
                       <div className="d-flex gap-2">
@@ -521,7 +761,9 @@ function GroupDetail() {
                           className="btn btn-primary"
                           disabled={guardando}
                         >
-                          {guardando ? "Guardando..." : "Guardar cambios"}
+                          {guardando
+                            ? "Guardando..."
+                            : "Guardar cambios"}
                         </button>
                       </div>
                     </div>
@@ -529,14 +771,20 @@ function GroupDetail() {
                 ) : (
                   <>
                     <div className="mt-4">
-                      <label className="form-label">Nombre del grupo</label>
+                      <label className="form-label">
+                        Nombre del grupo
+                      </label>
+
                       <div className="form-control bg-light">
                         {grupo.nombre}
                       </div>
                     </div>
 
                     <div className="mt-3">
-                      <label className="form-label">Descripción</label>
+                      <label className="form-label">
+                        Descripción
+                      </label>
+
                       <div
                         className="form-control bg-light"
                         style={{ minHeight: "110px" }}
@@ -546,17 +794,25 @@ function GroupDetail() {
                     </div>
 
                     <div className="mt-3">
-                      <label className="form-label">Creado por</label>
+                      <label className="form-label">
+                        Creado por
+                      </label>
+
                       <div className="form-control bg-light">
                         {grupo.creador_username || username}
                       </div>
                     </div>
 
                     <div className="mt-3">
-                      <label className="form-label">Fecha de creación</label>
+                      <label className="form-label">
+                        Fecha de creación
+                      </label>
+
                       <div className="form-control bg-light">
                         {grupo.fecha_creacion
-                          ? new Date(grupo.fecha_creacion).toLocaleDateString()
+                          ? new Date(
+                              grupo.fecha_creacion
+                            ).toLocaleDateString()
                           : "Sin fecha"}
                       </div>
                     </div>
@@ -564,7 +820,10 @@ function GroupDetail() {
                     <div className="mt-4">
                       <div className="d-flex justify-content-between align-items-center">
                         <div>
-                          <h5 className="mb-1">Participantes del grupo</h5>
+                          <h5 className="mb-1">
+                            Participantes del grupo
+                          </h5>
+
                           <small className="text-muted">
                             Total de participantes:{" "}
                             {grupo.participantes?.length || 0}
@@ -572,108 +831,144 @@ function GroupDetail() {
                         </div>
                       </div>
 
-                      {grupo.participantes && grupo.participantes.length > 0 ? (
+                      {grupo.participantes &&
+                      grupo.participantes.length > 0 ? (
                         <div className="mt-3">
-                          {grupo.participantes.map((participante) => (
-                            <div
-                              key={participante.id}
-                              className="border rounded p-3 mb-2"
-                            >
-                              <div className="d-flex justify-content-between align-items-start">
-                                <div>
-                                  <strong>{participante.nombre_completo}</strong>
-                                  <br />
-                                  <small className="text-muted">
-                                    Usuario: @{participante.username}
-                                  </small>
-                                  <br />
-                                  <small className="text-muted">
-                                    Correo:{" "}
-                                    {participante.email || "No registrado"}
-                                  </small>
+                          {grupo.participantes.map(
+                            (participante) => (
+                              <div
+                                key={participante.id}
+                                className="border rounded p-3 mb-2"
+                              >
+                                <div className="d-flex justify-content-between align-items-start">
+                                  <div>
+                                    <strong>
+                                      {
+                                        participante.nombre_completo
+                                      }
+                                    </strong>
 
-                                  {notasParticipantes[participante.id] && (
-                                    <>
-                                      <br />
-                                      <small className="text-muted">
-                                        Nota/Rol:{" "}
-                                        {notasParticipantes[participante.id]}
-                                      </small>
-                                    </>
-                                  )}
-                                </div>
+                                    <br />
 
-                                <div className="d-flex gap-2 align-items-center">
-                                  <span className="badge bg-light text-dark">
-                                    Participante
-                                  </span>
+                                    <small className="text-muted">
+                                      Usuario: @
+                                      {participante.username}
+                                    </small>
 
-                                  <button
-                                    className="btn btn-outline-primary btn-sm"
-                                    onClick={() =>
-                                      iniciarEdicionParticipante(participante)
-                                    }
-                                  >
-                                    Editar
-                                  </button>
+                                    <br />
 
-                                  <button
-                                    className="btn btn-outline-danger btn-sm"
-                                    onClick={() =>
-                                      eliminarParticipante(participante.id)
-                                    }
-                                  >
-                                    Eliminar
-                                  </button>
-                                </div>
-                              </div>
+                                    <small className="text-muted">
+                                      Correo:{" "}
+                                      {participante.email ||
+                                        "No registrado"}
+                                    </small>
 
-                              {participanteEditando === participante.id && (
-                                <div className="mt-3">
-                                  <label className="form-label">
-                                    Nota o rol del participante
-                                  </label>
+                                    {notasParticipantes[
+                                      participante.id
+                                    ] && (
+                                      <>
+                                        <br />
 
-                                  <input
-                                    type="text"
-                                    className="form-control"
-                                    placeholder="Ej: Responsable de pagos, amigo, compañero..."
-                                    value={notaTemporal}
-                                    onChange={(e) =>
-                                      setNotaTemporal(e.target.value)
-                                    }
-                                  />
+                                        <small className="text-muted">
+                                          Nota/Rol:{" "}
+                                          {
+                                            notasParticipantes[
+                                              participante.id
+                                            ]
+                                          }
+                                        </small>
+                                      </>
+                                    )}
+                                  </div>
 
-                                  <div className="d-flex gap-2 mt-3">
+                                  <div className="d-flex gap-2 align-items-center">
+                                    <span className="badge bg-light text-dark">
+                                      Participante
+                                    </span>
+
                                     <button
-                                      className="btn btn-outline-secondary btn-sm"
-                                      onClick={cancelarEdicionParticipante}
+                                      type="button"
+                                      className="btn btn-outline-primary btn-sm"
+                                      onClick={() =>
+                                        iniciarEdicionParticipante(
+                                          participante
+                                        )
+                                      }
                                     >
-                                      Cancelar
+                                      Editar
                                     </button>
 
                                     <button
-                                      className="btn btn-primary btn-sm"
+                                      type="button"
+                                      className="btn btn-outline-danger btn-sm"
                                       onClick={() =>
-                                        guardarEdicionParticipante(
+                                        eliminarParticipante(
                                           participante.id
                                         )
                                       }
                                     >
-                                      Guardar
+                                      Eliminar
                                     </button>
                                   </div>
                                 </div>
-                              )}
-                            </div>
-                          ))}
+
+                                {participanteEditando ===
+                                  participante.id && (
+                                  <div className="mt-3">
+                                    <label className="form-label">
+                                      Nota o rol del participante
+                                    </label>
+
+                                    <input
+                                      type="text"
+                                      className="form-control"
+                                      placeholder="Ej: Responsable de pagos, amigo, compañero..."
+                                      value={notaTemporal}
+                                      onChange={(e) =>
+                                        setNotaTemporal(
+                                          e.target.value
+                                        )
+                                      }
+                                    />
+
+                                    <div className="d-flex gap-2 mt-3">
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline-secondary btn-sm"
+                                        onClick={
+                                          cancelarEdicionParticipante
+                                        }
+                                      >
+                                        Cancelar
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        className="btn btn-primary btn-sm"
+                                        onClick={() =>
+                                          guardarEdicionParticipante(
+                                            participante.id
+                                          )
+                                        }
+                                      >
+                                        Guardar
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          )}
                         </div>
                       ) : (
                         <div className="empty-groups-card mt-3">
-                          <h5>No hay participantes todavía</h5>
+                          <h5>
+                            No hay participantes todavía
+                          </h5>
+
                           <p>
-                            Agrega usuarios registrados para que formen parte de
-                            este grupo.
+                            Agrega usuarios registrados para que
+                            formen parte de este grupo.
                           </p>
                         </div>
                       )}
@@ -688,7 +983,9 @@ function GroupDetail() {
                             className="form-control"
                             value={usuarioSeleccionado}
                             onChange={(e) =>
-                              setUsuarioSeleccionado(e.target.value)
+                              setUsuarioSeleccionado(
+                                e.target.value
+                              )
                             }
                           >
                             <option value="">
@@ -700,11 +997,15 @@ function GroupDetail() {
                                 (usuario) =>
                                   !grupo.participantes?.some(
                                     (participante) =>
-                                      participante.id === usuario.id
+                                      participante.id ===
+                                      usuario.id
                                   )
                               )
                               .map((usuario) => (
-                                <option key={usuario.id} value={usuario.id}>
+                                <option
+                                  key={usuario.id}
+                                  value={usuario.id}
+                                >
                                   {usuario.nombre_completo} (@
                                   {usuario.username})
                                 </option>
@@ -712,6 +1013,7 @@ function GroupDetail() {
                           </select>
 
                           <button
+                            type="button"
                             className="btn btn-primary"
                             onClick={agregarParticipante}
                             disabled={agregandoParticipante}
@@ -723,84 +1025,222 @@ function GroupDetail() {
                         </div>
                       </div>
 
-                      <div className="mt-5">
+                      <div className="mt-5 pt-4 border-top">
                         <div className="d-flex justify-content-between align-items-center">
                           <div>
                             <h5 className="mb-1">
-                              Seleccionar participantes para un gasto
+                              Registrar gasto
                             </h5>
+
                             <small className="text-muted">
-                              Participantes seleccionados:{" "}
-                              {participantesGasto.length}
+                              Ingresa la información del gasto
+                              realizado en este grupo.
                             </small>
                           </div>
                         </div>
 
-                        {grupo.participantes &&
-                        grupo.participantes.length > 0 ? (
-                          <div className="mt-3">
-                            {grupo.participantes.map((participante) => (
-                              <label
-                                key={participante.id}
-                                className="d-flex justify-content-between align-items-center border rounded p-3 mb-2"
-                                style={{ cursor: "pointer" }}
-                              >
-                                <div className="d-flex align-items-center gap-3">
-                                  <input
-                                    type="checkbox"
-                                    checked={participantesGasto.includes(
-                                      participante.id
-                                    )}
-                                    onChange={() =>
-                                      alternarParticipanteGasto(participante.id)
-                                    }
-                                  />
-
-                                  <div>
-                                    <strong>
-                                      {participante.nombre_completo}
-                                    </strong>
-                                    <br />
-                                    <small className="text-muted">
-                                      @{participante.username}
-                                    </small>
-                                  </div>
-                                </div>
-
-                                <span className="badge bg-light text-dark">
-                                  Para gasto
-                                </span>
+                        <form
+                          onSubmit={registrarGasto}
+                          className="mt-3"
+                        >
+                          <div className="row">
+                            <div className="col-md-6 mb-3">
+                              <label className="form-label">
+                                Descripción del gasto
                               </label>
-                            ))}
-                          </div>
-                        ) : (
-                          <div className="empty-groups-card mt-3">
-                            <h5>No hay participantes disponibles</h5>
-                            <p>
-                              Primero agrega participantes al grupo para poder
-                              seleccionarlos en un gasto.
-                            </p>
-                          </div>
-                        )}
 
-                        {participantesGasto.length > 0 && (
-                          <div className="alert alert-info mt-3" role="alert">
-                            Selección preparada para un futuro registro de gasto.
-                            Esta información todavía no se guarda porque el
-                            módulo de gastos se implementará después.
+                              <input
+                                type="text"
+                                name="descripcion"
+                                className="form-control"
+                                placeholder="Ej: Compra de alimentos"
+                                value={gastoData.descripcion}
+                                onChange={handleGastoChange}
+                                maxLength="150"
+                                required
+                              />
+                            </div>
+
+                            <div className="col-md-3 mb-3">
+                              <label className="form-label">
+                                Monto
+                              </label>
+
+                              <input
+                                type="number"
+                                name="monto"
+                                className="form-control"
+                                placeholder="0.00"
+                                min="0.01"
+                                step="0.01"
+                                value={gastoData.monto}
+                                onChange={handleGastoChange}
+                                required
+                              />
+                            </div>
+
+                            <div className="col-md-3 mb-3">
+                              <label className="form-label">
+                                Fecha
+                              </label>
+
+                              <input
+                                type="date"
+                                name="fecha_gasto"
+                                className="form-control"
+                                value={gastoData.fecha_gasto}
+                                onChange={handleGastoChange}
+                                required
+                              />
+                            </div>
                           </div>
-                        )}
+
+                          <div className="mb-4">
+                            <label className="form-label">
+                              ¿Quién pagó?
+                            </label>
+
+                            <select
+                              name="pagado_por_id"
+                              className="form-control"
+                              value={
+                                gastoData.pagado_por_id
+                              }
+                              onChange={handleGastoChange}
+                              required
+                            >
+                              <option value="">
+                                Selecciona al participante que
+                                pagó
+                              </option>
+
+                              {grupo.participantes?.map(
+                                (participante) => (
+                                  <option
+                                    key={participante.id}
+                                    value={participante.id}
+                                  >
+                                    {
+                                      participante.nombre_completo
+                                    }{" "}
+                                    (@{participante.username})
+                                  </option>
+                                )
+                              )}
+                            </select>
+                          </div>
+
+                          <div className="mb-3">
+                            <div className="d-flex justify-content-between align-items-center">
+                              <label className="form-label mb-0">
+                                Participantes incluidos en el
+                                gasto
+                              </label>
+
+                              <small className="text-muted">
+                                Seleccionados:{" "}
+                                {participantesGasto.length}
+                              </small>
+                            </div>
+
+                            {grupo.participantes &&
+                            grupo.participantes.length > 0 ? (
+                              <div className="mt-3">
+                                {grupo.participantes.map(
+                                  (participante) => (
+                                    <label
+                                      key={participante.id}
+                                      className="d-flex justify-content-between align-items-center border rounded p-3 mb-2"
+                                      style={{
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      <div className="d-flex align-items-center gap-3">
+                                        <input
+                                          type="checkbox"
+                                          checked={participantesGasto.includes(
+                                            participante.id
+                                          )}
+                                          onChange={() =>
+                                            alternarParticipanteGasto(
+                                              participante.id
+                                            )
+                                          }
+                                        />
+
+                                        <div>
+                                          <strong>
+                                            {
+                                              participante.nombre_completo
+                                            }
+                                          </strong>
+
+                                          <br />
+
+                                          <small className="text-muted">
+                                            @
+                                            {
+                                              participante.username
+                                            }
+                                          </small>
+                                        </div>
+                                      </div>
+
+                                      <span className="badge bg-light text-dark">
+                                        {participantesGasto.includes(
+                                          participante.id
+                                        )
+                                          ? "Incluido"
+                                          : "No incluido"}
+                                      </span>
+                                    </label>
+                                  )
+                                )}
+                              </div>
+                            ) : (
+                              <div className="empty-groups-card mt-3">
+                                <h5>
+                                  No hay participantes
+                                  disponibles
+                                </h5>
+
+                                <p>
+                                  Primero agrega participantes
+                                  al grupo para registrar un
+                                  gasto.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="d-flex justify-content-end mt-4">
+                            <button
+                              type="submit"
+                              className="btn btn-primary"
+                              disabled={
+                                registrandoGasto ||
+                                !grupo.participantes ||
+                                grupo.participantes.length === 0
+                              }
+                            >
+                              {registrandoGasto
+                                ? "Registrando gasto..."
+                                : "Registrar gasto"}
+                            </button>
+                          </div>
+                        </form>
                       </div>
                     </div>
 
                     <div className="create-group-footer mt-4">
                       <small>
-                        ⓘ Puedes administrar los participantes del grupo. La
-                        selección para gastos quedará conectada cuando se
-                        implemente el módulo completo de gastos.
+                        ⓘ Los gastos registrados se guardan en
+                        la base de datos y quedan asociados a
+                        este grupo.
                       </small>
 
                       <button
+                        type="button"
                         className="btn btn-primary"
                         onClick={() => navigate("/dashboard")}
                       >
@@ -813,12 +1253,20 @@ function GroupDetail() {
 
               <aside className="benefits-column">
                 <div className="benefits-card">
-                  <h4>Próximas funciones</h4>
+                  <h4>Gestión de gastos</h4>
 
                   <ul>
-                    <li>Registrar gastos compartidos.</li>
-                    <li>Guardar selección de participantes en un gasto.</li>
-                    <li>Consultar balances entre participantes.</li>
+                    <li>
+                      Registra el concepto y el valor total.
+                    </li>
+
+                    <li>
+                      Selecciona quién realizó el pago.
+                    </li>
+
+                    <li>
+                      Incluye a los participantes relacionados.
+                    </li>
                   </ul>
                 </div>
               </aside>

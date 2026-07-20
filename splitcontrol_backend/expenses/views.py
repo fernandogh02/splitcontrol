@@ -5,7 +5,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Group
-from .serializers import GroupSerializer, UserSimpleSerializer
+from .serializers import (
+    ExpenseSerializer,
+    GroupSerializer,
+    UserSimpleSerializer,
+)
 
 
 def prueba_api(request):
@@ -136,4 +140,51 @@ class RemoveParticipantView(APIView):
                 "grupo": serializer.data
             },
             status=status.HTTP_200_OK
+        )
+    
+class ExpenseCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        grupo = Group.objects.filter(
+            id=pk,
+            creador=request.user
+        ).first()
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para registrar gastos."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = ExpenseSerializer(
+            data=request.data,
+            context={
+                "request": request,
+                "grupo": grupo,
+            }
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        gasto = serializer.save(
+            grupo=grupo,
+            registrado_por=request.user
+        )
+
+        return Response(
+            {
+                "mensaje": "Gasto registrado correctamente.",
+                "gasto": ExpenseSerializer(gasto).data,
+            },
+            status=status.HTTP_201_CREATED
         )
