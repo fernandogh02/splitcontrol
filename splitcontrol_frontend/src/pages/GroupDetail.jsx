@@ -72,6 +72,7 @@ function GroupDetail() {
   const [participantesEdicion, setParticipantesEdicion] = useState([]);
   const [guardandoEdicionGasto, setGuardandoEdicionGasto] = useState(false);
   const [errorEdicionGasto, setErrorEdicionGasto] = useState("");
+  const [eliminandoGastoId, setEliminandoGastoId] = useState(null);
 
   const [participanteEditando, setParticipanteEditando] = useState(null);
   const [notaTemporal, setNotaTemporal] = useState("");
@@ -448,6 +449,88 @@ function GroupDetail() {
       );
     } finally {
       setGuardandoEdicionGasto(false);
+    }
+  };
+
+  const eliminarGasto = async (gasto) => {
+    const confirmar = window.confirm(
+      `¿Deseas eliminar el gasto "${gasto.descripcion}" por ${formatearMonto(
+        gasto.monto
+      )}? Esta acción no se puede deshacer.`
+    );
+
+    if (!confirmar) {
+      return;
+    }
+
+    setMensaje("");
+    setError("");
+    setErrorGastos("");
+
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setError("Tu sesión ha expirado. Inicia sesión nuevamente.");
+      return;
+    }
+
+    try {
+      setEliminandoGastoId(gasto.id);
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/gastos/${gasto.id}/`,
+        {
+          method: "DELETE",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          obtenerMensajeError(
+            data,
+            "No se pudo eliminar el gasto."
+          )
+        );
+      }
+
+      setGastos((gastosActuales) =>
+        gastosActuales.filter(
+          (gastoActual) => gastoActual.id !== gasto.id
+        )
+      );
+
+      if (gastoSeleccionado?.id === gasto.id) {
+        cerrarDetalleGasto();
+      }
+
+      if (gastoEditandoId === gasto.id) {
+        setEdicionGastoAbierta(false);
+        setGastoEditandoId(null);
+        setParticipantesEdicion([]);
+        setErrorEdicionGasto("");
+      }
+
+      setMensaje(
+        data.mensaje || "Gasto eliminado correctamente."
+      );
+    } catch (errorEliminacion) {
+      setError(
+        errorEliminacion.message ||
+          "No se pudo eliminar el gasto."
+      );
+    } finally {
+      setEliminandoGastoId(null);
     }
   };
 
@@ -1643,6 +1726,19 @@ function GroupDetail() {
                                         }
                                       >
                                         Editar
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline-danger btn-sm"
+                                        onClick={() => eliminarGasto(gasto)}
+                                        disabled={
+                                          eliminandoGastoId === gasto.id
+                                        }
+                                      >
+                                        {eliminandoGastoId === gasto.id
+                                          ? "Eliminando..."
+                                          : "Eliminar"}
                                       </button>
 
                                       <button
