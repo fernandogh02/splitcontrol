@@ -374,3 +374,204 @@ class ConsultaBalancesGrupoTest(APITestCase):
                 "para consultar sus balances."
             ),
         )
+    
+class ActualizacionBalancesAlRegistrarGastoTest(APITestCase):
+
+    def setUp(self):
+        self.damarys = User.objects.create_user(
+            username="damarys_sc40",
+            email="damarys_sc40@example.com",
+            password="Prueba123",
+        )
+
+        self.andres = User.objects.create_user(
+            username="andres_sc40",
+            email="andres_sc40@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc40",
+            email="carlita_sc40@example.com",
+            password="Prueba123",
+        )
+
+        self.grupo = Group.objects.create(
+            nombre="Grupo SC-40",
+            descripcion="Prueba de actualización de balances",
+            creador=self.damarys,
+        )
+
+        self.grupo.participantes.add(
+            self.damarys,
+            self.andres,
+            self.carlita,
+        )
+
+        self.client.force_authenticate(
+            user=self.damarys
+        )
+
+    def test_registrar_gasto_actualiza_balances(self):
+        respuesta_inicial = self.client.get(
+            f"/api/grupos/{self.grupo.id}/balances/"
+        )
+
+        self.assertEqual(
+            respuesta_inicial.status_code,
+            status.HTTP_200_OK,
+        )
+
+        resumen_inicial = respuesta_inicial.data["resumen"]
+
+        self.assertEqual(
+            Decimal(resumen_inicial["total_pagado"]),
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                resumen_inicial["total_correspondiente"]
+            ),
+            Decimal("0.00"),
+        )
+
+        for balance in respuesta_inicial.data["balances"]:
+            self.assertEqual(
+                Decimal(balance["balance"]),
+                Decimal("0.00"),
+            )
+
+            self.assertEqual(
+                balance["estado"],
+                "saldado",
+            )
+
+        respuesta_registro = self.client.post(
+            f"/api/grupos/{self.grupo.id}/gastos/",
+            {
+                "descripcion": "Cena del grupo",
+                "monto": "60.00",
+                "fecha_gasto": "2026-07-20",
+                "pagado_por_id": self.andres.id,
+                "participantes_ids": [
+                    self.damarys.id,
+                    self.andres.id,
+                    self.carlita.id,
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            respuesta_registro.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        self.assertEqual(
+            len(
+                respuesta_registro.data["gasto"][
+                    "divisiones"
+                ]
+            ),
+            3,
+        )
+
+        respuesta_actualizada = self.client.get(
+            f"/api/grupos/{self.grupo.id}/balances/"
+        )
+
+        self.assertEqual(
+            respuesta_actualizada.status_code,
+            status.HTTP_200_OK,
+        )
+
+        resumen_actualizado = (
+            respuesta_actualizada.data["resumen"]
+        )
+
+        self.assertEqual(
+            Decimal(resumen_actualizado["total_pagado"]),
+            Decimal("60.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                resumen_actualizado[
+                    "total_correspondiente"
+                ]
+            ),
+            Decimal("60.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                resumen_actualizado["balance_general"]
+            ),
+            Decimal("0.00"),
+        )
+
+        balances = {
+            balance["participante"]["username"]: balance
+            for balance in respuesta_actualizada.data[
+                "balances"
+            ]
+        }
+
+        balance_andres = balances["andres_sc40"]
+
+        self.assertEqual(
+            Decimal(balance_andres["total_pagado"]),
+            Decimal("60.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                balance_andres["total_correspondiente"]
+            ),
+            Decimal("20.00"),
+        )
+
+        self.assertEqual(
+            Decimal(balance_andres["balance"]),
+            Decimal("40.00"),
+        )
+
+        self.assertEqual(
+            balance_andres["estado"],
+            "a_favor",
+        )
+
+        for username in [
+            "damarys_sc40",
+            "carlita_sc40",
+        ]:
+            balance_participante = balances[username]
+
+            self.assertEqual(
+                Decimal(
+                    balance_participante["total_pagado"]
+                ),
+                Decimal("0.00"),
+            )
+
+            self.assertEqual(
+                Decimal(
+                    balance_participante[
+                        "total_correspondiente"
+                    ]
+                ),
+                Decimal("20.00"),
+            )
+
+            self.assertEqual(
+                Decimal(
+                    balance_participante["balance"]
+                ),
+                Decimal("-20.00"),
+            )
+
+            self.assertEqual(
+                balance_participante["estado"],
+                "debe",
+            )
