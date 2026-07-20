@@ -1,6 +1,7 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Group
+
+from .models import Expense, Group
 
 
 class UserSimpleSerializer(serializers.ModelSerializer):
@@ -28,7 +29,10 @@ class GroupSerializer(serializers.ModelSerializer):
         read_only=True
     )
 
-    participantes = UserSimpleSerializer(many=True, read_only=True)
+    participantes = UserSimpleSerializer(
+        many=True,
+        read_only=True
+    )
 
     class Meta:
         model = Group
@@ -40,9 +44,122 @@ class GroupSerializer(serializers.ModelSerializer):
             "participantes",
             "fecha_creacion",
         ]
+
         read_only_fields = [
             "id",
             "creador_username",
             "participantes",
             "fecha_creacion",
         ]
+
+
+class ExpenseSerializer(serializers.ModelSerializer):
+    pagado_por = UserSimpleSerializer(
+        read_only=True
+    )
+
+    pagado_por_id = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        source="pagado_por",
+        write_only=True
+    )
+
+    participantes = UserSimpleSerializer(
+        many=True,
+        read_only=True
+    )
+
+    participantes_ids = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        source="participantes",
+        many=True,
+        write_only=True
+    )
+
+    registrado_por = UserSimpleSerializer(
+        read_only=True
+    )
+
+    class Meta:
+        model = Expense
+        fields = [
+            "id",
+            "grupo",
+            "descripcion",
+            "monto",
+            "fecha_gasto",
+            "pagado_por",
+            "pagado_por_id",
+            "participantes",
+            "participantes_ids",
+            "registrado_por",
+            "fecha_registro",
+        ]
+
+        read_only_fields = [
+            "id",
+            "grupo",
+            "pagado_por",
+            "participantes",
+            "registrado_por",
+            "fecha_registro",
+        ]
+
+    def validate_descripcion(self, value):
+        descripcion = value.strip()
+
+        if not descripcion:
+            raise serializers.ValidationError(
+                "La descripción del gasto es obligatoria."
+            )
+
+        return descripcion
+
+    def validate_participantes_ids(self, participantes):
+        if not participantes:
+            raise serializers.ValidationError(
+                "Debe seleccionar al menos un participante."
+            )
+
+        participantes_sin_repetir = []
+
+        for participante in participantes:
+            if participante not in participantes_sin_repetir:
+                participantes_sin_repetir.append(participante)
+
+        return participantes_sin_repetir
+
+    def validate(self, attrs):
+        grupo = self.context.get("grupo")
+        pagado_por = attrs.get("pagado_por")
+        participantes = attrs.get("participantes", [])
+
+        if not grupo:
+            raise serializers.ValidationError(
+                "No se pudo identificar el grupo."
+            )
+
+        if not grupo.participantes.filter(id=pagado_por.id).exists():
+            raise serializers.ValidationError({
+                "pagado_por_id": (
+                    "La persona que pagó debe pertenecer al grupo."
+                )
+            })
+
+        participantes_invalidos = [
+            participante.id
+            for participante in participantes
+            if not grupo.participantes.filter(
+                id=participante.id
+            ).exists()
+        ]
+
+        if participantes_invalidos:
+            raise serializers.ValidationError({
+                "participantes_ids": (
+                    "Todos los participantes seleccionados "
+                    "deben pertenecer al grupo."
+                )
+            })
+
+        return attrs
