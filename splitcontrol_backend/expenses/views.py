@@ -23,11 +23,18 @@ class GroupListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Group.objects.filter(creador=self.request.user)
+        return Group.objects.filter(
+            creador=self.request.user
+        )
 
     def perform_create(self, serializer):
-        grupo = serializer.save(creador=self.request.user)
-        grupo.participantes.add(self.request.user)
+        grupo = serializer.save(
+            creador=self.request.user
+        )
+
+        grupo.participantes.add(
+            self.request.user
+        )
 
 
 class GroupDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -35,7 +42,9 @@ class GroupDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Group.objects.filter(creador=self.request.user)
+        return Group.objects.filter(
+            creador=self.request.user
+        )
 
 
 class UserListView(generics.ListAPIView):
@@ -43,7 +52,11 @@ class UserListView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return User.objects.exclude(id=self.request.user.id).order_by("username")
+        return (
+            User.objects
+            .exclude(id=self.request.user.id)
+            .order_by("username")
+        )
 
 
 class AddParticipantView(APIView):
@@ -52,35 +65,49 @@ class AddParticipantView(APIView):
     def post(self, request, pk):
         grupo = Group.objects.filter(
             id=pk,
-            creador=request.user
+            creador=request.user,
         ).first()
 
         if not grupo:
             return Response(
-                {"error": "Grupo no encontrado."},
-                status=status.HTTP_404_NOT_FOUND
+                {
+                    "error": "Grupo no encontrado."
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         usuario_id = request.data.get("usuario_id")
 
         if not usuario_id:
             return Response(
-                {"error": "Debe seleccionar un usuario."},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    "error": "Debe seleccionar un usuario."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        usuario = User.objects.filter(id=usuario_id).first()
+        usuario = User.objects.filter(
+            id=usuario_id
+        ).first()
 
         if not usuario:
             return Response(
-                {"error": "Usuario no encontrado."},
-                status=status.HTTP_404_NOT_FOUND
+                {
+                    "error": "Usuario no encontrado."
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
 
-        if grupo.participantes.filter(id=usuario.id).exists():
+        if grupo.participantes.filter(
+            id=usuario.id
+        ).exists():
             return Response(
-                {"error": "El usuario ya es participante del grupo."},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    "error": (
+                        "El usuario ya es participante del grupo."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         grupo.participantes.add(usuario)
@@ -89,45 +116,64 @@ class AddParticipantView(APIView):
 
         return Response(
             {
-                "mensaje": "Participante agregado correctamente.",
-                "grupo": serializer.data
+                "mensaje": (
+                    "Participante agregado correctamente."
+                ),
+                "grupo": serializer.data,
             },
-            status=status.HTTP_200_OK
+            status=status.HTTP_200_OK,
         )
-    
+
+
 class RemoveParticipantView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def delete(self, request, pk, usuario_id):
         grupo = Group.objects.filter(
             id=pk,
-            creador=request.user
+            creador=request.user,
         ).first()
 
         if not grupo:
             return Response(
-                {"error": "Grupo no encontrado."},
-                status=status.HTTP_404_NOT_FOUND
+                {
+                    "error": "Grupo no encontrado."
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
 
-        usuario = User.objects.filter(id=usuario_id).first()
+        usuario = User.objects.filter(
+            id=usuario_id
+        ).first()
 
         if not usuario:
             return Response(
-                {"error": "Usuario no encontrado."},
-                status=status.HTTP_404_NOT_FOUND
+                {
+                    "error": "Usuario no encontrado."
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         if usuario == grupo.creador:
             return Response(
-                {"error": "No puedes eliminar al creador del grupo."},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    "error": (
+                        "No puedes eliminar al creador del grupo."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not grupo.participantes.filter(id=usuario.id).exists():
+        if not grupo.participantes.filter(
+            id=usuario.id
+        ).exists():
             return Response(
-                {"error": "El usuario no pertenece a este grupo."},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    "error": (
+                        "El usuario no pertenece a este grupo."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         grupo.participantes.remove(usuario)
@@ -136,19 +182,22 @@ class RemoveParticipantView(APIView):
 
         return Response(
             {
-                "mensaje": "Participante eliminado correctamente.",
-                "grupo": serializer.data
+                "mensaje": (
+                    "Participante eliminado correctamente."
+                ),
+                "grupo": serializer.data,
             },
-            status=status.HTTP_200_OK
+            status=status.HTTP_200_OK,
         )
-    
+
+
 class ExpenseCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, pk):
         grupo = Group.objects.filter(
             id=pk,
-            creador=request.user
+            creador=request.user,
         ).first()
 
         if not grupo:
@@ -159,7 +208,7 @@ class ExpenseCreateView(APIView):
                         "para consultar sus gastos."
                     )
                 },
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         gastos = (
@@ -168,15 +217,18 @@ class ExpenseCreateView(APIView):
             .select_related(
                 "grupo",
                 "pagado_por",
-                "registrado_por"
+                "registrado_por",
             )
             .prefetch_related("participantes")
-            .order_by("-fecha_gasto", "-fecha_registro")
+            .order_by(
+                "-fecha_gasto",
+                "-fecha_registro",
+            )
         )
 
         serializer = ExpenseSerializer(
             gastos,
-            many=True
+            many=True,
         )
 
         return Response(
@@ -186,13 +238,13 @@ class ExpenseCreateView(APIView):
                 "total_gastos": gastos.count(),
                 "gastos": serializer.data,
             },
-            status=status.HTTP_200_OK
+            status=status.HTTP_200_OK,
         )
 
     def post(self, request, pk):
         grupo = Group.objects.filter(
             id=pk,
-            creador=request.user
+            creador=request.user,
         ).first()
 
         if not grupo:
@@ -203,7 +255,7 @@ class ExpenseCreateView(APIView):
                         "para registrar gastos."
                     )
                 },
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         serializer = ExpenseSerializer(
@@ -211,35 +263,38 @@ class ExpenseCreateView(APIView):
             context={
                 "request": request,
                 "grupo": grupo,
-            }
+            },
         )
 
         if not serializer.is_valid():
             return Response(
                 serializer.errors,
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         gasto = serializer.save(
             grupo=grupo,
-            registrado_por=request.user
+            registrado_por=request.user,
         )
 
         return Response(
             {
-                "mensaje": "Gasto registrado correctamente.",
+                "mensaje": (
+                    "Gasto registrado correctamente."
+                ),
                 "gasto": ExpenseSerializer(gasto).data,
             },
-            status=status.HTTP_201_CREATED
+            status=status.HTTP_201_CREATED,
         )
-    
+
+
 class ExpenseDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, grupo_id, gasto_id):
         grupo = Group.objects.filter(
             id=grupo_id,
-            creador=request.user
+            creador=request.user,
         ).first()
 
         if not grupo:
@@ -250,19 +305,19 @@ class ExpenseDetailView(APIView):
                         "para consultar sus gastos."
                     )
                 },
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         gasto = (
             Expense.objects
             .filter(
                 id=gasto_id,
-                grupo=grupo
+                grupo=grupo,
             )
             .select_related(
                 "grupo",
                 "pagado_por",
-                "registrado_por"
+                "registrado_por",
             )
             .prefetch_related("participantes")
             .first()
@@ -272,15 +327,89 @@ class ExpenseDetailView(APIView):
             return Response(
                 {
                     "error": (
-                        "El gasto no existe o no pertenece a este grupo."
+                        "El gasto no existe o no pertenece "
+                        "a este grupo."
                     )
                 },
-                status=status.HTTP_404_NOT_FOUND
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         return Response(
             {
                 "gasto": ExpenseSerializer(gasto).data
             },
-            status=status.HTTP_200_OK
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request, grupo_id, gasto_id):
+        grupo = Group.objects.filter(
+            id=grupo_id,
+            creador=request.user,
+        ).first()
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para editar sus gastos."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        gasto = (
+            Expense.objects
+            .filter(
+                id=gasto_id,
+                grupo=grupo,
+            )
+            .select_related(
+                "grupo",
+                "pagado_por",
+                "registrado_por",
+            )
+            .prefetch_related("participantes")
+            .first()
+        )
+
+        if not gasto:
+            return Response(
+                {
+                    "error": (
+                        "El gasto no existe o no pertenece "
+                        "a este grupo."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ExpenseSerializer(
+            gasto,
+            data=request.data,
+            partial=True,
+            context={
+                "request": request,
+                "grupo": grupo,
+            },
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        gasto_actualizado = serializer.save()
+
+        return Response(
+            {
+                "mensaje": (
+                    "Gasto actualizado correctamente."
+                ),
+                "gasto": ExpenseSerializer(
+                    gasto_actualizado
+                ).data,
+            },
+            status=status.HTTP_200_OK,
         )

@@ -20,18 +20,19 @@ class UserSimpleSerializer(serializers.ModelSerializer):
 
     def get_nombre_completo(self, obj):
         nombre = f"{obj.first_name} {obj.last_name}".strip()
+
         return nombre if nombre else obj.username
 
 
 class GroupSerializer(serializers.ModelSerializer):
     creador_username = serializers.CharField(
         source="creador.username",
-        read_only=True
+        read_only=True,
     )
 
     participantes = UserSimpleSerializer(
         many=True,
-        read_only=True
+        read_only=True,
     )
 
     class Meta:
@@ -55,29 +56,29 @@ class GroupSerializer(serializers.ModelSerializer):
 
 class ExpenseSerializer(serializers.ModelSerializer):
     pagado_por = UserSimpleSerializer(
-        read_only=True
+        read_only=True,
     )
 
     pagado_por_id = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
         source="pagado_por",
-        write_only=True
+        write_only=True,
     )
 
     participantes = UserSimpleSerializer(
         many=True,
-        read_only=True
+        read_only=True,
     )
 
     participantes_ids = serializers.PrimaryKeyRelatedField(
         queryset=User.objects.all(),
         source="participantes",
         many=True,
-        write_only=True
+        write_only=True,
     )
 
     registrado_por = UserSimpleSerializer(
-        read_only=True
+        read_only=True,
     )
 
     class Meta:
@@ -131,20 +132,55 @@ class ExpenseSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         grupo = self.context.get("grupo")
-        pagado_por = attrs.get("pagado_por")
-        participantes = attrs.get("participantes", [])
+
+        pagado_por = attrs.get(
+            "pagado_por",
+            getattr(self.instance, "pagado_por", None),
+        )
+
+        participantes = attrs.get("participantes")
+
+        if participantes is None:
+            if self.instance:
+                participantes = list(
+                    self.instance.participantes.all()
+                )
+            else:
+                participantes = []
 
         if not grupo:
             raise serializers.ValidationError(
                 "No se pudo identificar el grupo."
             )
 
-        if not grupo.participantes.filter(id=pagado_por.id).exists():
-            raise serializers.ValidationError({
-                "pagado_por_id": (
-                    "La persona que pagó debe pertenecer al grupo."
-                )
-            })
+        if not pagado_por:
+            raise serializers.ValidationError(
+                {
+                    "pagado_por_id": (
+                        "Debe seleccionar quién pagó el gasto."
+                    )
+                }
+            )
+
+        if not grupo.participantes.filter(
+            id=pagado_por.id
+        ).exists():
+            raise serializers.ValidationError(
+                {
+                    "pagado_por_id": (
+                        "La persona que pagó debe pertenecer al grupo."
+                    )
+                }
+            )
+
+        if not participantes:
+            raise serializers.ValidationError(
+                {
+                    "participantes_ids": (
+                        "Debe seleccionar al menos un participante."
+                    )
+                }
+            )
 
         participantes_invalidos = [
             participante.id
@@ -155,11 +191,13 @@ class ExpenseSerializer(serializers.ModelSerializer):
         ]
 
         if participantes_invalidos:
-            raise serializers.ValidationError({
-                "participantes_ids": (
-                    "Todos los participantes seleccionados "
-                    "deben pertenecer al grupo."
-                )
-            })
+            raise serializers.ValidationError(
+                {
+                    "participantes_ids": (
+                        "Todos los participantes seleccionados "
+                        "deben pertenecer al grupo."
+                    )
+                }
+            )
 
         return attrs

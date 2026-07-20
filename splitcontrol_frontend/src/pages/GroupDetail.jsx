@@ -61,6 +61,18 @@ function GroupDetail() {
   const [cargandoDetalleGasto, setCargandoDetalleGasto] = useState(false);
   const [errorDetalleGasto, setErrorDetalleGasto] = useState("");
 
+  const [edicionGastoAbierta, setEdicionGastoAbierta] = useState(false);
+  const [gastoEditandoId, setGastoEditandoId] = useState(null);
+  const [edicionGastoData, setEdicionGastoData] = useState({
+    descripcion: "",
+    monto: "",
+    fecha_gasto: obtenerFechaActual(),
+    pagado_por_id: "",
+  });
+  const [participantesEdicion, setParticipantesEdicion] = useState([]);
+  const [guardandoEdicionGasto, setGuardandoEdicionGasto] = useState(false);
+  const [errorEdicionGasto, setErrorEdicionGasto] = useState("");
+
   const [participanteEditando, setParticipanteEditando] = useState(null);
   const [notaTemporal, setNotaTemporal] = useState("");
   const [notasParticipantes, setNotasParticipantes] = useState({});
@@ -258,6 +270,187 @@ function GroupDetail() {
     setCargandoDetalleGasto(false);
   };
 
+  const abrirEdicionGasto = (gasto) => {
+    setGastoEditandoId(gasto.id);
+    setEdicionGastoData({
+      descripcion: gasto.descripcion || "",
+      monto: gasto.monto || "",
+      fecha_gasto: gasto.fecha_gasto || obtenerFechaActual(),
+      pagado_por_id: gasto.pagado_por?.id
+        ? String(gasto.pagado_por.id)
+        : "",
+    });
+    setParticipantesEdicion(
+      Array.isArray(gasto.participantes)
+        ? gasto.participantes.map((participante) => participante.id)
+        : []
+    );
+    setErrorEdicionGasto("");
+    setMensaje("");
+    setError("");
+    setEdicionGastoAbierta(true);
+  };
+
+  const cerrarEdicionGasto = () => {
+    if (guardandoEdicionGasto) {
+      return;
+    }
+
+    setEdicionGastoAbierta(false);
+    setGastoEditandoId(null);
+    setEdicionGastoData({
+      descripcion: "",
+      monto: "",
+      fecha_gasto: obtenerFechaActual(),
+      pagado_por_id: "",
+    });
+    setParticipantesEdicion([]);
+    setErrorEdicionGasto("");
+  };
+
+  const handleEdicionGastoChange = (e) => {
+    setEdicionGastoData({
+      ...edicionGastoData,
+      [e.target.name]: e.target.value,
+    });
+  };
+
+  const alternarParticipanteEdicion = (participanteId) => {
+    setParticipantesEdicion((seleccionados) => {
+      if (seleccionados.includes(participanteId)) {
+        return seleccionados.filter(
+          (item) => item !== participanteId
+        );
+      }
+
+      return [...seleccionados, participanteId];
+    });
+  };
+
+  const guardarEdicionGasto = async (e) => {
+    e.preventDefault();
+    setErrorEdicionGasto("");
+
+    if (!edicionGastoData.descripcion.trim()) {
+      setErrorEdicionGasto(
+        "Escribe una descripción para el gasto."
+      );
+      return;
+    }
+
+    if (
+      !edicionGastoData.monto ||
+      Number(edicionGastoData.monto) <= 0
+    ) {
+      setErrorEdicionGasto(
+        "El monto debe ser mayor que cero."
+      );
+      return;
+    }
+
+    if (!edicionGastoData.fecha_gasto) {
+      setErrorEdicionGasto(
+        "Selecciona la fecha del gasto."
+      );
+      return;
+    }
+
+    if (!edicionGastoData.pagado_por_id) {
+      setErrorEdicionGasto(
+        "Selecciona quién pagó el gasto."
+      );
+      return;
+    }
+
+    if (participantesEdicion.length === 0) {
+      setErrorEdicionGasto(
+        "Selecciona al menos un participante para el gasto."
+      );
+      return;
+    }
+
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setErrorEdicionGasto(
+        "Tu sesión ha expirado. Inicia sesión nuevamente."
+      );
+      return;
+    }
+
+    try {
+      setGuardandoEdicionGasto(true);
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/gastos/${gastoEditandoId}/`,
+        {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            descripcion: edicionGastoData.descripcion.trim(),
+            monto: edicionGastoData.monto,
+            fecha_gasto: edicionGastoData.fecha_gasto,
+            pagado_por_id: Number(
+              edicionGastoData.pagado_por_id
+            ),
+            participantes_ids: participantesEdicion,
+          }),
+        }
+      );
+
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          obtenerMensajeError(
+            data,
+            "No se pudo actualizar el gasto."
+          )
+        );
+      }
+
+      if (data.gasto) {
+        setGastos((gastosActuales) =>
+          gastosActuales.map((gasto) =>
+            gasto.id === data.gasto.id
+              ? data.gasto
+              : gasto
+          )
+        );
+
+        setGastoSeleccionado((detalleActual) =>
+          detalleActual?.id === data.gasto.id
+            ? data.gasto
+            : detalleActual
+        );
+      }
+
+      setEdicionGastoAbierta(false);
+      setGastoEditandoId(null);
+      setParticipantesEdicion([]);
+      setErrorEdicionGasto("");
+      setMensaje(
+        data.mensaje || "Gasto actualizado correctamente."
+      );
+    } catch (errorEdicion) {
+      setErrorEdicionGasto(
+        errorEdicion.message ||
+          "No se pudo actualizar el gasto."
+      );
+    } finally {
+      setGuardandoEdicionGasto(false);
+    }
+  };
+
   const handleChange = (e) => {
     setFormData({
       ...formData,
@@ -272,9 +465,12 @@ function GroupDetail() {
     });
   };
 
-  const obtenerMensajeError = (data) => {
+  const obtenerMensajeError = (
+    data,
+    mensajePredeterminado = "No se pudo completar la operación."
+  ) => {
     if (!data || typeof data !== "object") {
-      return "No se pudo registrar el gasto.";
+      return mensajePredeterminado;
     }
 
     if (data.error) {
@@ -288,7 +484,7 @@ function GroupDetail() {
     const primeraClave = Object.keys(data)[0];
 
     if (!primeraClave) {
-      return "No se pudo registrar el gasto.";
+      return mensajePredeterminado;
     }
 
     const detalle = data[primeraClave];
@@ -301,7 +497,7 @@ function GroupDetail() {
       const subClave = Object.keys(detalle)[0];
 
       if (!subClave) {
-        return "No se pudo registrar el gasto.";
+        return mensajePredeterminado;
       }
 
       const subDetalle = detalle[subClave];
@@ -502,7 +698,12 @@ function GroupDetail() {
       }
 
       if (!response.ok) {
-        throw new Error(obtenerMensajeError(data));
+        throw new Error(
+          obtenerMensajeError(
+            data,
+            "No se pudo registrar el gasto."
+          )
+        );
       }
 
       setGastoData({
@@ -1433,15 +1634,27 @@ function GroupDetail() {
                                       {formatearMonto(gasto.monto)}
                                     </strong>
 
-                                    <button
-                                      type="button"
-                                      className="btn btn-outline-primary btn-sm mt-2"
-                                      onClick={() =>
-                                        verDetalleGasto(gasto.id)
-                                      }
-                                    >
-                                      Ver detalle
-                                    </button>
+                                    <div className="d-flex gap-2 justify-content-end mt-2">
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline-secondary btn-sm"
+                                        onClick={() =>
+                                          abrirEdicionGasto(gasto)
+                                        }
+                                      >
+                                        Editar
+                                      </button>
+
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline-primary btn-sm"
+                                        onClick={() =>
+                                          verDetalleGasto(gasto.id)
+                                        }
+                                      >
+                                        Ver detalle
+                                      </button>
+                                    </div>
                                   </div>
                                 </div>
 
@@ -1543,6 +1756,222 @@ function GroupDetail() {
           </>
         )}
       </main>
+
+      {edicionGastoAbierta && (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
+          style={{
+            backgroundColor: "rgba(0, 0, 0, 0.55)",
+            zIndex: 1060,
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Editar gasto"
+          onClick={cerrarEdicionGasto}
+        >
+          <div
+            className="bg-white rounded shadow-lg w-100"
+            style={{
+              maxWidth: "760px",
+              maxHeight: "90vh",
+              overflowY: "auto",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="d-flex justify-content-between align-items-center border-bottom p-4">
+              <div>
+                <h4 className="mb-1">Editar gasto</h4>
+                <small className="text-muted">
+                  Modifica la información del gasto seleccionado.
+                </small>
+              </div>
+
+              <button
+                type="button"
+                className="btn-close"
+                aria-label="Cerrar"
+                onClick={cerrarEdicionGasto}
+                disabled={guardandoEdicionGasto}
+              />
+            </div>
+
+            <form onSubmit={guardarEdicionGasto}>
+              <div className="p-4">
+                {errorEdicionGasto && (
+                  <div
+                    className="alert alert-danger"
+                    role="alert"
+                  >
+                    {errorEdicionGasto}
+                  </div>
+                )}
+
+                <div className="row">
+                  <div className="col-md-6 mb-3">
+                    <label className="form-label">
+                      Descripción del gasto
+                    </label>
+
+                    <input
+                      type="text"
+                      name="descripcion"
+                      className="form-control"
+                      value={edicionGastoData.descripcion}
+                      onChange={handleEdicionGastoChange}
+                      maxLength="150"
+                      disabled={guardandoEdicionGasto}
+                      required
+                    />
+                  </div>
+
+                  <div className="col-md-3 mb-3">
+                    <label className="form-label">
+                      Monto
+                    </label>
+
+                    <input
+                      type="number"
+                      name="monto"
+                      className="form-control"
+                      min="0.01"
+                      step="0.01"
+                      value={edicionGastoData.monto}
+                      onChange={handleEdicionGastoChange}
+                      disabled={guardandoEdicionGasto}
+                      required
+                    />
+                  </div>
+
+                  <div className="col-md-3 mb-3">
+                    <label className="form-label">
+                      Fecha
+                    </label>
+
+                    <input
+                      type="date"
+                      name="fecha_gasto"
+                      className="form-control"
+                      value={edicionGastoData.fecha_gasto}
+                      onChange={handleEdicionGastoChange}
+                      disabled={guardandoEdicionGasto}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="mb-4">
+                  <label className="form-label">
+                    ¿Quién pagó?
+                  </label>
+
+                  <select
+                    name="pagado_por_id"
+                    className="form-control"
+                    value={edicionGastoData.pagado_por_id}
+                    onChange={handleEdicionGastoChange}
+                    disabled={guardandoEdicionGasto}
+                    required
+                  >
+                    <option value="">
+                      Selecciona al participante que pagó
+                    </option>
+
+                    {grupo?.participantes?.map(
+                      (participante) => (
+                        <option
+                          key={participante.id}
+                          value={participante.id}
+                        >
+                          {participante.nombre_completo} (@
+                          {participante.username})
+                        </option>
+                      )
+                    )}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="d-flex justify-content-between align-items-center">
+                    <label className="form-label mb-0">
+                      Participantes incluidos
+                    </label>
+
+                    <small className="text-muted">
+                      Seleccionados: {participantesEdicion.length}
+                    </small>
+                  </div>
+
+                  <div className="mt-3">
+                    {grupo?.participantes?.map(
+                      (participante) => (
+                        <label
+                          key={participante.id}
+                          className="d-flex justify-content-between align-items-center border rounded p-3 mb-2"
+                          style={{ cursor: "pointer" }}
+                        >
+                          <div className="d-flex align-items-center gap-3">
+                            <input
+                              type="checkbox"
+                              checked={participantesEdicion.includes(
+                                participante.id
+                              )}
+                              onChange={() =>
+                                alternarParticipanteEdicion(
+                                  participante.id
+                                )
+                              }
+                              disabled={guardandoEdicionGasto}
+                            />
+
+                            <div>
+                              <strong>
+                                {participante.nombre_completo}
+                              </strong>
+
+                              <small className="text-muted d-block">
+                                @{participante.username}
+                              </small>
+                            </div>
+                          </div>
+
+                          <span className="badge bg-light text-dark border">
+                            {participantesEdicion.includes(
+                              participante.id
+                            )
+                              ? "Incluido"
+                              : "No incluido"}
+                          </span>
+                        </label>
+                      )
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="d-flex justify-content-end gap-2 border-top p-4">
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary"
+                  onClick={cerrarEdicionGasto}
+                  disabled={guardandoEdicionGasto}
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={guardandoEdicionGasto}
+                >
+                  {guardandoEdicionGasto
+                    ? "Guardando cambios..."
+                    : "Guardar cambios"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {detalleGastoAbierto && (
         <div
