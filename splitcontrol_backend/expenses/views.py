@@ -1,10 +1,13 @@
+from decimal import Decimal
+
 from django.contrib.auth.models import User
+from django.db.models import Sum
 from django.http import JsonResponse
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Expense, Group
+from .models import Expense, ExpenseDivision, Group
 from .serializers import (
     ExpenseSerializer,
     GroupSerializer,
@@ -494,6 +497,136 @@ class ExpenseDetailView(APIView):
             {
                 "mensaje": "Gasto eliminado correctamente.",
                 "gasto_id": gasto_eliminado_id,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+class GroupBalanceView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        grupo = (
+            Group.objects
+            .filter(
+                id=pk,
+                creador=request.user,
+            )
+            .prefetch_related("participantes")
+            .first()
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar sus balances."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        pagos_agrupados = (
+            Expense.objects
+            .filter(grupo=grupo)
+            .values("pagado_por_id")
+            .annotate(total=Sum("monto"))
+        )
+
+        valores_asignados = (
+            ExpenseDivision.objects
+            .filter(gasto__grupo=grupo)
+            .values("participante_id")
+            .annotate(total=Sum("monto_asignado"))
+        )
+
+        pagos_por_participante = {
+            item["pagado_por_id"]: (
+                item["total"] or Decimal("0.00")
+            )
+            for item in pagos_agrupados
+        }
+
+        asignado_por_participante = {
+            item["participante_id"]: (
+                item["total"] or Decimal("0.00")
+            )
+            for item in valores_asignados
+        }
+
+        balances = []
+        total_pagado_grupo = Decimal("0.00")
+        total_correspondiente_grupo = Decimal("0.00")
+
+        participantes = grupo.participantes.all().order_by(
+            "username"
+        )
+
+        for participante in participantes:
+            total_pagado = pagos_por_participante.get(
+                participante.id,
+                Decimal("0.00"),
+            )
+
+            total_correspondiente = (
+                asignado_por_participante.get(
+                    participante.id,
+                    Decimal("0.00"),
+                )
+            )
+
+            balance = (
+                total_pagado - total_correspondiente
+            ).quantize(Decimal("0.01"))
+
+            if balance > Decimal("0.00"):
+                estado = "a_favor"
+            elif balance < Decimal("0.00"):
+                estado = "debe"
+            else:
+                estado = "saldado"
+
+            total_pagado_grupo += total_pagado
+            total_correspondiente_grupo += (
+                total_correspondiente
+            )
+
+            balances.append(
+                {
+                    "participante": UserSimpleSerializer(
+                        participante
+                    ).data,
+                    "total_pagado": f"{total_pagado:.2f}",
+                    "total_correspondiente": (
+                        f"{total_correspondiente:.2f}"
+                    ),
+                    "balance": f"{balance:.2f}",
+                    "estado": estado,
+                }
+            )
+
+        balance_general = (
+            total_pagado_grupo
+            - total_correspondiente_grupo
+        ).quantize(Decimal("0.01"))
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "resumen": {
+                    "total_pagado": (
+                        f"{total_pagado_grupo:.2f}"
+                    ),
+                    "total_correspondiente": (
+                        f"{total_correspondiente_grupo:.2f}"
+                    ),
+                    "balance_general": (
+                        f"{balance_general:.2f}"
+                    ),
+                },
+                "total_participantes": len(balances),
+                "balances": balances,
             },
             status=status.HTTP_200_OK,
         )
