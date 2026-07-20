@@ -1,7 +1,8 @@
 from django.contrib.auth.models import User
+from django.db import transaction
 from rest_framework import serializers
 
-from .models import Expense, Group
+from .models import Expense, ExpenseDivision, Group
 
 
 class UserSimpleSerializer(serializers.ModelSerializer):
@@ -54,6 +55,24 @@ class GroupSerializer(serializers.ModelSerializer):
         ]
 
 
+class ExpenseDivisionSerializer(serializers.ModelSerializer):
+    participante = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    class Meta:
+        model = ExpenseDivision
+        fields = [
+            "id",
+            "participante",
+            "monto_asignado",
+            "fecha_creacion",
+            "fecha_actualizacion",
+        ]
+
+        read_only_fields = fields
+
+
 class ExpenseSerializer(serializers.ModelSerializer):
     pagado_por = UserSimpleSerializer(
         read_only=True,
@@ -77,6 +96,11 @@ class ExpenseSerializer(serializers.ModelSerializer):
         write_only=True,
     )
 
+    divisiones = ExpenseDivisionSerializer(
+        many=True,
+        read_only=True,
+    )
+
     registrado_por = UserSimpleSerializer(
         read_only=True,
     )
@@ -93,6 +117,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
             "pagado_por_id",
             "participantes",
             "participantes_ids",
+            "divisiones",
             "registrado_por",
             "fecha_registro",
         ]
@@ -102,6 +127,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
             "grupo",
             "pagado_por",
             "participantes",
+            "divisiones",
             "registrado_por",
             "fecha_registro",
         ]
@@ -154,33 +180,27 @@ class ExpenseSerializer(serializers.ModelSerializer):
             )
 
         if not pagado_por:
-            raise serializers.ValidationError(
-                {
-                    "pagado_por_id": (
-                        "Debe seleccionar quién pagó el gasto."
-                    )
-                }
-            )
+            raise serializers.ValidationError({
+                "pagado_por_id": (
+                    "Debe seleccionar quién pagó el gasto."
+                )
+            })
 
         if not grupo.participantes.filter(
             id=pagado_por.id
         ).exists():
-            raise serializers.ValidationError(
-                {
-                    "pagado_por_id": (
-                        "La persona que pagó debe pertenecer al grupo."
-                    )
-                }
-            )
+            raise serializers.ValidationError({
+                "pagado_por_id": (
+                    "La persona que pagó debe pertenecer al grupo."
+                )
+            })
 
         if not participantes:
-            raise serializers.ValidationError(
-                {
-                    "participantes_ids": (
-                        "Debe seleccionar al menos un participante."
-                    )
-                }
-            )
+            raise serializers.ValidationError({
+                "participantes_ids": (
+                    "Debe seleccionar al menos un participante."
+                )
+            })
 
         participantes_invalidos = [
             participante.id
@@ -191,13 +211,30 @@ class ExpenseSerializer(serializers.ModelSerializer):
         ]
 
         if participantes_invalidos:
-            raise serializers.ValidationError(
-                {
-                    "participantes_ids": (
-                        "Todos los participantes seleccionados "
-                        "deben pertenecer al grupo."
-                    )
-                }
-            )
+            raise serializers.ValidationError({
+                "participantes_ids": (
+                    "Todos los participantes seleccionados "
+                    "deben pertenecer al grupo."
+                )
+            })
 
         return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        gasto = super().create(validated_data)
+
+        gasto.calcular_division_equitativa()
+
+        return gasto
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        gasto = super().update(
+            instance,
+            validated_data,
+        )
+
+        gasto.calcular_division_equitativa()
+
+        return gasto

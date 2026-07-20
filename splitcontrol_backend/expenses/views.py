@@ -219,7 +219,10 @@ class ExpenseCreateView(APIView):
                 "pagado_por",
                 "registrado_por",
             )
-            .prefetch_related("participantes")
+            .prefetch_related(
+                "participantes",
+                "divisiones__participante",
+            )
             .order_by(
                 "-fecha_gasto",
                 "-fecha_registro",
@@ -277,12 +280,28 @@ class ExpenseCreateView(APIView):
             registrado_por=request.user,
         )
 
+        gasto_actualizado = (
+            Expense.objects
+            .select_related(
+                "grupo",
+                "pagado_por",
+                "registrado_por",
+            )
+            .prefetch_related(
+                "participantes",
+                "divisiones__participante",
+            )
+            .get(id=gasto.id)
+        )
+
         return Response(
             {
                 "mensaje": (
                     "Gasto registrado correctamente."
                 ),
-                "gasto": ExpenseSerializer(gasto).data,
+                "gasto": ExpenseSerializer(
+                    gasto_actualizado
+                ).data,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -319,7 +338,10 @@ class ExpenseDetailView(APIView):
                 "pagado_por",
                 "registrado_por",
             )
-            .prefetch_related("participantes")
+            .prefetch_related(
+                "participantes",
+                "divisiones__participante",
+            )
             .first()
         )
 
@@ -369,7 +391,10 @@ class ExpenseDetailView(APIView):
                 "pagado_por",
                 "registrado_por",
             )
-            .prefetch_related("participantes")
+            .prefetch_related(
+                "participantes",
+                "divisiones__participante",
+            )
             .first()
         )
 
@@ -401,6 +426,20 @@ class ExpenseDetailView(APIView):
             )
 
         gasto_actualizado = serializer.save()
+
+        gasto_actualizado = (
+            Expense.objects
+            .select_related(
+                "grupo",
+                "pagado_por",
+                "registrado_por",
+            )
+            .prefetch_related(
+                "participantes",
+                "divisiones__participante",
+            )
+            .get(id=gasto_actualizado.id)
+        )
 
         return Response(
             {
