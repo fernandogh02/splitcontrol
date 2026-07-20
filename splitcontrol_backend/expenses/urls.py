@@ -7,6 +7,7 @@ from .views import (
     AddParticipantView,
     ExpenseCreateView,
     RemoveParticipantView,
+    ExpenseDetailView,
 )
 
 urlpatterns = [
@@ -28,5 +29,10 @@ urlpatterns = [
         "grupos/<int:pk>/gastos/",
          ExpenseCreateView.as_view(),
          name="registrar_gasto"
+    ),
+    path(
+        "grupos/<int:grupo_id>/gastos/<int:gasto_id>/",
+         ExpenseDetailView.as_view(),
+          name="detalle_gasto"
     ),
 ]

@@ -25,6 +25,14 @@ const formatearFecha = (fecha) => {
   return new Date(`${fecha}T00:00:00`).toLocaleDateString("es-EC");
 };
 
+const formatearFechaHora = (fecha) => {
+  if (!fecha) {
+    return "Sin fecha";
+  }
+
+  return new Date(fecha).toLocaleString("es-EC");
+};
+
 function GroupDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -47,6 +55,11 @@ function GroupDetail() {
   const [gastos, setGastos] = useState([]);
   const [cargandoGastos, setCargandoGastos] = useState(true);
   const [errorGastos, setErrorGastos] = useState("");
+
+  const [detalleGastoAbierto, setDetalleGastoAbierto] = useState(false);
+  const [gastoSeleccionado, setGastoSeleccionado] = useState(null);
+  const [cargandoDetalleGasto, setCargandoDetalleGasto] = useState(false);
+  const [errorDetalleGasto, setErrorDetalleGasto] = useState("");
 
   const [participanteEditando, setParticipanteEditando] = useState(null);
   const [notaTemporal, setNotaTemporal] = useState("");
@@ -191,6 +204,59 @@ function GroupDetail() {
 
     obtenerGastos();
   }, [id]);
+
+  const verDetalleGasto = async (gastoId) => {
+    const token = localStorage.getItem("access");
+
+    setDetalleGastoAbierto(true);
+    setGastoSeleccionado(null);
+    setErrorDetalleGasto("");
+
+    if (!token) {
+      setErrorDetalleGasto(
+        "Tu sesión ha expirado. Inicia sesión nuevamente."
+      );
+      return;
+    }
+
+    try {
+      setCargandoDetalleGasto(true);
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/gastos/${gastoId}/`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "No se pudo cargar el detalle del gasto."
+        );
+      }
+
+      setGastoSeleccionado(data.gasto || null);
+    } catch (errorDetalle) {
+      setErrorDetalleGasto(
+        errorDetalle.message ||
+          "No se pudo cargar el detalle del gasto."
+      );
+    } finally {
+      setCargandoDetalleGasto(false);
+    }
+  };
+
+  const cerrarDetalleGasto = () => {
+    setDetalleGastoAbierto(false);
+    setGastoSeleccionado(null);
+    setErrorDetalleGasto("");
+    setCargandoDetalleGasto(false);
+  };
 
   const handleChange = (e) => {
     setFormData({
@@ -1362,9 +1428,21 @@ function GroupDetail() {
                                     </small>
                                   </div>
 
-                                  <strong className="fs-5">
-                                    {formatearMonto(gasto.monto)}
-                                  </strong>
+                                  <div className="text-end">
+                                    <strong className="fs-5 d-block">
+                                      {formatearMonto(gasto.monto)}
+                                    </strong>
+
+                                    <button
+                                      type="button"
+                                      className="btn btn-outline-primary btn-sm mt-2"
+                                      onClick={() =>
+                                        verDetalleGasto(gasto.id)
+                                      }
+                                    >
+                                      Ver detalle
+                                    </button>
+                                  </div>
                                 </div>
 
                                 <div className="mt-3">
@@ -1465,6 +1543,183 @@ function GroupDetail() {
           </>
         )}
       </main>
+
+      {detalleGastoAbierto && (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
+          style={{
+            backgroundColor: "rgba(0, 0, 0, 0.55)",
+            zIndex: 1050,
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Detalle del gasto"
+          onClick={cerrarDetalleGasto}
+        >
+          <div
+            className="bg-white rounded shadow-lg w-100"
+            style={{
+              maxWidth: "680px",
+              maxHeight: "90vh",
+              overflowY: "auto",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="d-flex justify-content-between align-items-center border-bottom p-4">
+              <div>
+                <h4 className="mb-1">Detalle del gasto</h4>
+                <small className="text-muted">
+                  Información completa del gasto seleccionado.
+                </small>
+              </div>
+
+              <button
+                type="button"
+                className="btn-close"
+                aria-label="Cerrar"
+                onClick={cerrarDetalleGasto}
+              />
+            </div>
+
+            <div className="p-4">
+              {cargandoDetalleGasto ? (
+                <div className="alert alert-light border mb-0" role="alert">
+                  Cargando detalle del gasto...
+                </div>
+              ) : errorDetalleGasto ? (
+                <div className="alert alert-danger mb-0" role="alert">
+                  {errorDetalleGasto}
+                </div>
+              ) : gastoSeleccionado ? (
+                <>
+                  <div className="d-flex justify-content-between align-items-start gap-3 mb-4">
+                    <div>
+                      <small className="text-muted">Descripción</small>
+                      <h5 className="mb-0">
+                        {gastoSeleccionado.descripcion}
+                      </h5>
+                    </div>
+
+                    <strong className="fs-4">
+                      {formatearMonto(gastoSeleccionado.monto)}
+                    </strong>
+                  </div>
+
+                  <div className="row g-3">
+                    <div className="col-md-6">
+                      <small className="text-muted">Fecha del gasto</small>
+                      <div className="fw-semibold">
+                        {formatearFecha(gastoSeleccionado.fecha_gasto)}
+                      </div>
+                    </div>
+
+                    <div className="col-md-6">
+                      <small className="text-muted">Fecha de registro</small>
+                      <div className="fw-semibold">
+                        {formatearFechaHora(
+                          gastoSeleccionado.fecha_registro
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 p-3 border rounded bg-light">
+                    <small className="text-muted">Pagado por</small>
+                    <div className="fw-semibold">
+                      {gastoSeleccionado.pagado_por?.nombre_completo ||
+                        gastoSeleccionado.pagado_por?.username ||
+                        "Sin información"}
+                    </div>
+
+                    {gastoSeleccionado.pagado_por?.username && (
+                      <small className="text-muted d-block">
+                        @{gastoSeleccionado.pagado_por.username}
+                      </small>
+                    )}
+
+                    {gastoSeleccionado.pagado_por?.email && (
+                      <small className="text-muted d-block">
+                        {gastoSeleccionado.pagado_por.email}
+                      </small>
+                    )}
+                  </div>
+
+                  <div className="mt-4">
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <h6 className="mb-0">Participantes incluidos</h6>
+                      <span className="badge bg-light text-dark border">
+                        {gastoSeleccionado.participantes?.length || 0}
+                      </span>
+                    </div>
+
+                    {gastoSeleccionado.participantes?.length > 0 ? (
+                      <div className="d-flex flex-column gap-2">
+                        {gastoSeleccionado.participantes.map(
+                          (participante) => (
+                            <div
+                              key={participante.id}
+                              className="border rounded p-3"
+                            >
+                              <strong>
+                                {participante.nombre_completo ||
+                                  participante.username}
+                              </strong>
+
+                              <small className="text-muted d-block">
+                                @{participante.username}
+                              </small>
+
+                              {participante.email && (
+                                <small className="text-muted d-block">
+                                  {participante.email}
+                                </small>
+                              )}
+                            </div>
+                          )
+                        )}
+                      </div>
+                    ) : (
+                      <div className="alert alert-light border mb-0">
+                        No hay participantes asociados a este gasto.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4 p-3 border rounded">
+                    <small className="text-muted">Registrado por</small>
+                    <div className="fw-semibold">
+                      {gastoSeleccionado.registrado_por?.nombre_completo ||
+                        gastoSeleccionado.registrado_por?.username ||
+                        "Sin información"}
+                    </div>
+
+                    {gastoSeleccionado.registrado_por?.username && (
+                      <small className="text-muted d-block">
+                        @{gastoSeleccionado.registrado_por.username}
+                      </small>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="alert alert-warning mb-0" role="alert">
+                  No se encontró información del gasto.
+                </div>
+              )}
+            </div>
+
+            <div className="d-flex justify-content-end border-top p-4">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={cerrarDetalleGasto}
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
