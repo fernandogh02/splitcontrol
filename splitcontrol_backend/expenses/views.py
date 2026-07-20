@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Expense, ExpenseDivision, Group
+from .services import calcular_deudas_grupo
 from .serializers import (
     ExpenseSerializer,
     GroupSerializer,
@@ -627,6 +628,77 @@ class GroupBalanceView(APIView):
                 },
                 "total_participantes": len(balances),
                 "balances": balances,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+class GroupDebtView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        grupo = (
+            Group.objects
+            .filter(
+                id=pk,
+                creador=request.user,
+            )
+            .prefetch_related("participantes")
+            .first()
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar sus deudas."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        deudas_calculadas = calcular_deudas_grupo(grupo)
+
+        deudas = []
+
+        for deuda in deudas_calculadas:
+            deudor = deuda["deudor"]
+            acreedor = deuda["acreedor"]
+            monto = deuda["monto"]
+
+            deudas.append(
+                {
+                    "deudor": UserSimpleSerializer(
+                        deudor
+                    ).data,
+                    "acreedor": UserSimpleSerializer(
+                        acreedor
+                    ).data,
+                    "monto": f"{monto:.2f}",
+                    "mensaje": (
+                        f"{deudor.username} debe pagar "
+                        f"${monto:.2f} a {acreedor.username}."
+                    ),
+                }
+            )
+
+        total_deudas = sum(
+            (
+                deuda["monto"]
+                for deuda in deudas_calculadas
+            ),
+            Decimal("0.00"),
+        )
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "total_deudas": len(deudas),
+                "monto_total_pendiente": (
+                    f"{total_deudas:.2f}"
+                ),
+                "deudas": deudas,
             },
             status=status.HTTP_200_OK,
         )

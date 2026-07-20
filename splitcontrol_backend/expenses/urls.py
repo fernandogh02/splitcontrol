@@ -5,6 +5,7 @@ from .views import (
     ExpenseCreateView,
     ExpenseDetailView,
     GroupBalanceView,
+    GroupDebtView,
     GroupDetailView,
     GroupListCreateView,
     RemoveParticipantView,
@@ -58,5 +59,10 @@ urlpatterns = [
         "grupos/<int:pk>/balances/",
         GroupBalanceView.as_view(),
         name="consultar_balances_grupo",
+    ),
+    path(
+        "grupos/<int:pk>/deudas/",
+        GroupDebtView.as_view(),
+        name="consultar_deudas_grupo",
     ),
 ]
