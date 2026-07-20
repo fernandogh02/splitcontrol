@@ -17,6 +17,32 @@ const formatearMonto = (monto) =>
     currency: "USD",
   }).format(Number(monto) || 0);
 
+const formatearBalance = (balance) => {
+  const valor = Number(balance) || 0;
+
+  if (valor > 0) {
+    return `+${formatearMonto(valor)}`;
+  }
+
+  if (valor < 0) {
+    return `-${formatearMonto(Math.abs(valor))}`;
+  }
+
+  return formatearMonto(0);
+};
+
+const obtenerTextoEstadoBalance = (estado) => {
+  if (estado === "a_favor") {
+    return "A favor";
+  }
+
+  if (estado === "debe") {
+    return "Debe";
+  }
+
+  return "Saldado";
+};
+
 const formatearFecha = (fecha) => {
   if (!fecha) {
     return "Sin fecha";
@@ -56,6 +82,11 @@ function GroupDetail() {
   const [cargandoGastos, setCargandoGastos] = useState(true);
   const [errorGastos, setErrorGastos] = useState("");
 
+  const [balances, setBalances] = useState([]);
+  const [resumenBalances, setResumenBalances] = useState(null);
+  const [cargandoBalances, setCargandoBalances] = useState(true);
+  const [errorBalances, setErrorBalances] = useState("");
+
   const [detalleGastoAbierto, setDetalleGastoAbierto] = useState(false);
   const [gastoSeleccionado, setGastoSeleccionado] = useState(null);
   const [cargandoDetalleGasto, setCargandoDetalleGasto] = useState(false);
@@ -94,6 +125,61 @@ function GroupDetail() {
   const displayName =
     username.charAt(0).toUpperCase() + username.slice(1);
   const avatarLetter = username.charAt(0).toUpperCase();
+
+  const obtenerBalances = async () => {
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setErrorBalances(
+        "Tu sesión ha expirado. Inicia sesión nuevamente."
+      );
+      setCargandoBalances(false);
+      return;
+    }
+
+    try {
+      setCargandoBalances(true);
+      setErrorBalances("");
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/balances/`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "No se pudieron cargar los balances."
+        );
+      }
+
+      setBalances(
+        Array.isArray(data.balances) ? data.balances : []
+      );
+      setResumenBalances(data.resumen || null);
+    } catch (errorBalance) {
+      setBalances([]);
+      setResumenBalances(null);
+      setErrorBalances(
+        errorBalance.message ||
+          "No se pudieron cargar los balances del grupo."
+      );
+    } finally {
+      setCargandoBalances(false);
+    }
+  };
 
   useEffect(() => {
     const obtenerDetalleGrupo = async () => {
@@ -216,6 +302,65 @@ function GroupDetail() {
     };
 
     obtenerGastos();
+  }, [id]);
+
+  useEffect(() => {
+    const cargarBalancesIniciales = async () => {
+      const token = localStorage.getItem("access");
+
+      if (!token) {
+        setErrorBalances(
+          "Tu sesión ha expirado. Inicia sesión nuevamente."
+        );
+        setCargandoBalances(false);
+        return;
+      }
+
+      try {
+        setCargandoBalances(true);
+        setErrorBalances("");
+
+        const response = await fetch(
+          `http://127.0.0.1:8000/api/grupos/${id}/balances/`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        let data = {};
+
+        try {
+          data = await response.json();
+        } catch {
+          data = {};
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || "No se pudieron cargar los balances."
+          );
+        }
+
+        setBalances(
+          Array.isArray(data.balances) ? data.balances : []
+        );
+        setResumenBalances(data.resumen || null);
+      } catch (errorBalance) {
+        setBalances([]);
+        setResumenBalances(null);
+        setErrorBalances(
+          errorBalance.message ||
+            "No se pudieron cargar los balances del grupo."
+        );
+      } finally {
+        setCargandoBalances(false);
+      }
+    };
+
+    cargarBalancesIniciales();
   }, [id]);
 
   const verDetalleGasto = async (gastoId) => {
@@ -442,6 +587,8 @@ function GroupDetail() {
       setMensaje(
         data.mensaje || "Gasto actualizado correctamente."
       );
+
+      await obtenerBalances();
     } catch (errorEdicion) {
       setErrorEdicionGasto(
         errorEdicion.message ||
@@ -524,6 +671,8 @@ function GroupDetail() {
       setMensaje(
         data.mensaje || "Gasto eliminado correctamente."
       );
+
+      await obtenerBalances();
     } catch (errorEliminacion) {
       setError(
         errorEliminacion.message ||
@@ -809,6 +958,8 @@ function GroupDetail() {
       setMensaje(
         data.mensaje || "Gasto registrado correctamente."
       );
+
+      await obtenerBalances();
     } catch (errorGasto) {
       setError(
         errorGasto.message || "No se pudo registrar el gasto."
@@ -892,6 +1043,8 @@ function GroupDetail() {
       setGrupo(data.grupo);
       setUsuarioSeleccionado("");
       setMensaje("Participante agregado correctamente.");
+
+      await obtenerBalances();
     } catch (errorParticipante) {
       setError(
         errorParticipante.message ||
@@ -970,6 +1123,8 @@ function GroupDetail() {
       setParticipanteEditando(null);
       setNotaTemporal("");
       setMensaje("Participante eliminado correctamente.");
+
+      await obtenerBalances();
     } catch (errorParticipante) {
       setError(
         errorParticipante.message ||
@@ -1446,6 +1601,181 @@ function GroupDetail() {
                               : "Agregar"}
                           </button>
                         </div>
+                      </div>
+
+                      <div className="mt-5 pt-4 border-top">
+                        <div className="d-flex justify-content-between align-items-center gap-3">
+                          <div>
+                            <h5 className="mb-1">
+                              Balances individuales
+                            </h5>
+
+                            <small className="text-muted">
+                              Revisa cuánto pagó, cuánto le correspondía
+                              y el saldo actual de cada participante.
+                            </small>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="btn btn-outline-primary btn-sm"
+                            onClick={obtenerBalances}
+                            disabled={cargandoBalances}
+                          >
+                            {cargandoBalances
+                              ? "Actualizando..."
+                              : "Actualizar"}
+                          </button>
+                        </div>
+
+                        {cargandoBalances ? (
+                          <div
+                            className="alert alert-light border mt-3"
+                            role="alert"
+                          >
+                            Cargando balances del grupo...
+                          </div>
+                        ) : errorBalances ? (
+                          <div
+                            className="alert alert-danger mt-3"
+                            role="alert"
+                          >
+                            {errorBalances}
+                          </div>
+                        ) : (
+                          <>
+                            {resumenBalances && (
+                              <div className="row g-3 mt-1">
+                                <div className="col-md-4">
+                                  <div className="border rounded p-3 h-100 bg-light">
+                                    <small className="text-muted d-block">
+                                      Total pagado
+                                    </small>
+
+                                    <strong className="fs-5">
+                                      {formatearMonto(
+                                        resumenBalances.total_pagado
+                                      )}
+                                    </strong>
+                                  </div>
+                                </div>
+
+                                <div className="col-md-4">
+                                  <div className="border rounded p-3 h-100 bg-light">
+                                    <small className="text-muted d-block">
+                                      Total repartido
+                                    </small>
+
+                                    <strong className="fs-5">
+                                      {formatearMonto(
+                                        resumenBalances.total_correspondiente
+                                      )}
+                                    </strong>
+                                  </div>
+                                </div>
+
+                                <div className="col-md-4">
+                                  <div className="border rounded p-3 h-100 bg-light">
+                                    <small className="text-muted d-block">
+                                      Balance general
+                                    </small>
+
+                                    <strong className="fs-5">
+                                      {formatearBalance(
+                                        resumenBalances.balance_general
+                                      )}
+                                    </strong>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+
+                            {balances.length > 0 ? (
+                              <div className="d-flex flex-column gap-3 mt-3">
+                                {balances.map((balance) => {
+                                  const estadoClase =
+                                    balance.estado === "a_favor"
+                                      ? "bg-success"
+                                      : balance.estado === "debe"
+                                        ? "bg-danger"
+                                        : "bg-secondary";
+
+                                  return (
+                                    <div
+                                      key={balance.participante.id}
+                                      className="border rounded p-3"
+                                    >
+                                      <div className="d-flex justify-content-between align-items-start gap-3">
+                                        <div>
+                                          <strong>
+                                            {balance.participante
+                                              .nombre_completo ||
+                                              balance.participante
+                                                .username}
+                                          </strong>
+
+                                          <small className="text-muted d-block">
+                                            @{balance.participante.username}
+                                          </small>
+                                        </div>
+
+                                        <div className="text-end">
+                                          <span
+                                            className={`badge ${estadoClase}`}
+                                          >
+                                            {obtenerTextoEstadoBalance(
+                                              balance.estado
+                                            )}
+                                          </span>
+
+                                          <strong className="fs-5 d-block mt-2">
+                                            {formatearBalance(
+                                              balance.balance
+                                            )}
+                                          </strong>
+                                        </div>
+                                      </div>
+
+                                      <div className="row g-2 mt-2">
+                                        <div className="col-md-6">
+                                          <div className="bg-light border rounded p-2">
+                                            <small className="text-muted d-block">
+                                              Total pagado
+                                            </small>
+
+                                            <strong>
+                                              {formatearMonto(
+                                                balance.total_pagado
+                                              )}
+                                            </strong>
+                                          </div>
+                                        </div>
+
+                                        <div className="col-md-6">
+                                          <div className="bg-light border rounded p-2">
+                                            <small className="text-muted d-block">
+                                              Le correspondía
+                                            </small>
+
+                                            <strong>
+                                              {formatearMonto(
+                                                balance.total_correspondiente
+                                              )}
+                                            </strong>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="alert alert-light border mt-3 mb-0">
+                                No hay balances disponibles para este grupo.
+                              </div>
+                            )}
+                          </>
+                        )}
                       </div>
 
                       <div className="mt-5 pt-4 border-top">
