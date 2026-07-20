@@ -1803,6 +1803,54 @@ function GroupDetail() {
                                     )}
                                   </div>
                                 </div>
+
+                                <div className="mt-3 p-3 border rounded bg-light">
+                                  <div className="d-flex justify-content-between align-items-center">
+                                    <small className="fw-semibold">
+                                      División individual
+                                    </small>
+
+                                    <span className="badge bg-white text-dark border">
+                                      {gasto.divisiones?.length || 0}
+                                    </span>
+                                  </div>
+
+                                  {Array.isArray(gasto.divisiones) &&
+                                  gasto.divisiones.length > 0 ? (
+                                    <div className="d-flex flex-column gap-2 mt-3">
+                                      {gasto.divisiones.map(
+                                        (division) => (
+                                          <div
+                                            key={
+                                              division.id ||
+                                              `${gasto.id}-${division.participante?.id}`
+                                            }
+                                            className="d-flex justify-content-between align-items-center bg-white border rounded px-3 py-2"
+                                          >
+                                            <span>
+                                              {division.participante
+                                                ?.nombre_completo ||
+                                                division.participante
+                                                  ?.username ||
+                                                "Participante"}
+                                            </span>
+
+                                            <strong>
+                                              {formatearMonto(
+                                                division.monto_asignado
+                                              )}
+                                            </strong>
+                                          </div>
+                                        )
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <small className="text-muted d-block mt-2">
+                                      No hay una división calculada para este
+                                      gasto.
+                                    </small>
+                                  )}
+                                </div>
                               </div>
                             ))}
                           </div>
@@ -2206,6 +2254,70 @@ function GroupDetail() {
                     ) : (
                       <div className="alert alert-light border mb-0">
                         No hay participantes asociados a este gasto.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mt-4">
+                    <div className="d-flex justify-content-between align-items-center mb-2">
+                      <div>
+                        <h6 className="mb-1">División individual</h6>
+                        <small className="text-muted">
+                          Valor que corresponde pagar a cada participante.
+                        </small>
+                      </div>
+
+                      <span className="badge bg-light text-dark border">
+                        {gastoSeleccionado.divisiones?.length || 0}
+                      </span>
+                    </div>
+
+                    {Array.isArray(gastoSeleccionado.divisiones) &&
+                    gastoSeleccionado.divisiones.length > 0 ? (
+                      <div className="d-flex flex-column gap-2">
+                        {gastoSeleccionado.divisiones.map(
+                          (division) => (
+                            <div
+                              key={
+                                division.id ||
+                                `${gastoSeleccionado.id}-${division.participante?.id}`
+                              }
+                              className="d-flex justify-content-between align-items-center border rounded p-3"
+                            >
+                              <div>
+                                <strong>
+                                  {division.participante
+                                    ?.nombre_completo ||
+                                    division.participante
+                                      ?.username ||
+                                    "Participante"}
+                                </strong>
+
+                                {division.participante?.username && (
+                                  <small className="text-muted d-block">
+                                    @{division.participante.username}
+                                  </small>
+                                )}
+                              </div>
+
+                              <div className="text-end">
+                                <small className="text-muted d-block">
+                                  Le corresponde
+                                </small>
+
+                                <strong className="fs-5">
+                                  {formatearMonto(
+                                    division.monto_asignado
+                                  )}
+                                </strong>
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    ) : (
+                      <div className="alert alert-light border mb-0">
+                        No hay una división calculada para este gasto.
                       </div>
                     )}
                   </div>
