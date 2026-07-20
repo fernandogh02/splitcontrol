@@ -413,3 +413,48 @@ class ExpenseDetailView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+    def delete(self, request, grupo_id, gasto_id):
+        grupo = Group.objects.filter(
+            id=grupo_id,
+            creador=request.user,
+        ).first()
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para eliminar sus gastos."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        gasto = Expense.objects.filter(
+            id=gasto_id,
+            grupo=grupo,
+        ).first()
+
+        if not gasto:
+            return Response(
+                {
+                    "error": (
+                        "El gasto no existe o no pertenece "
+                        "a este grupo."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        gasto_eliminado_id = gasto.id
+
+        gasto.delete()
+
+        return Response(
+            {
+                "mensaje": "Gasto eliminado correctamente.",
+                "gasto_id": gasto_eliminado_id,
+            },
+            status=status.HTTP_200_OK,
+        )
