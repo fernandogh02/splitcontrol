@@ -1,19 +1,36 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/splitcontrol-logo.png";
 
 function ExpenseSummary() {
   const navigate = useNavigate();
-  const [grupos, setGrupos] = useState([]);
 
-  const username = localStorage.getItem("username") || "usuario";
-  const displayName = username.charAt(0).toUpperCase() + username.slice(1);
-  const avatarLetter = username.charAt(0).toUpperCase();
+  const [grupos] = useState(() => {
+    const gruposGuardados = localStorage.getItem("grupos");
 
-  useEffect(() => {
-    const gruposGuardados = JSON.parse(localStorage.getItem("grupos")) || [];
-    setGrupos(gruposGuardados);
-  }, []);
+    if (!gruposGuardados) {
+      return [];
+    }
+
+    try {
+      const gruposConvertidos = JSON.parse(gruposGuardados);
+
+      return Array.isArray(gruposConvertidos)
+        ? gruposConvertidos
+        : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const username =
+    localStorage.getItem("username") || "usuario";
+
+  const displayName =
+    username.charAt(0).toUpperCase() + username.slice(1);
+
+  const avatarLetter =
+    username.charAt(0).toUpperCase();
 
   const handleLogout = () => {
     localStorage.removeItem("access");

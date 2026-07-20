@@ -66,7 +66,7 @@ function CreateGroup() {
       setTimeout(() => {
         navigate("/dashboard");
       }, 1000);
-    } catch (error) {
+    } catch {
       setError("No se pudo crear el grupo. Revisa el backend o intenta nuevamente.");
     } finally {
       setCargando(false);

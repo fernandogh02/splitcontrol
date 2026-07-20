@@ -45,7 +45,7 @@ function Login() {
       });
 
       navigate("/dashboard");
-    } catch (error) {
+    } catch {
       setError("Usuario o contraseña incorrectos.");
     }
   };

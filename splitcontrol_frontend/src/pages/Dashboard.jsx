@@ -37,7 +37,7 @@ function Dashboard() {
 
         const data = await response.json();
         setGrupos(data);
-      } catch (error) {
+      } catch {
         setErrorGrupos("No se pudieron cargar tus grupos.");
       } finally {
         setCargandoGrupos(false);
