@@ -4,7 +4,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Group
+from .models import Expense, Group
 from .serializers import (
     ExpenseSerializer,
     GroupSerializer,
@@ -144,6 +144,50 @@ class RemoveParticipantView(APIView):
     
 class ExpenseCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        grupo = Group.objects.filter(
+            id=pk,
+            creador=request.user
+        ).first()
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar sus gastos."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        gastos = (
+            Expense.objects
+            .filter(grupo=grupo)
+            .select_related(
+                "grupo",
+                "pagado_por",
+                "registrado_por"
+            )
+            .prefetch_related("participantes")
+            .order_by("-fecha_gasto", "-fecha_registro")
+        )
+
+        serializer = ExpenseSerializer(
+            gastos,
+            many=True
+        )
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "total_gastos": gastos.count(),
+                "gastos": serializer.data,
+            },
+            status=status.HTTP_200_OK
+        )
 
     def post(self, request, pk):
         grupo = Group.objects.filter(

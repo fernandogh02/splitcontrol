@@ -11,6 +11,20 @@ const obtenerFechaActual = () => {
     .split("T")[0];
 };
 
+const formatearMonto = (monto) =>
+  new Intl.NumberFormat("es-EC", {
+    style: "currency",
+    currency: "USD",
+  }).format(Number(monto) || 0);
+
+const formatearFecha = (fecha) => {
+  if (!fecha) {
+    return "Sin fecha";
+  }
+
+  return new Date(`${fecha}T00:00:00`).toLocaleDateString("es-EC");
+};
+
 function GroupDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -29,6 +43,10 @@ function GroupDetail() {
   });
 
   const [registrandoGasto, setRegistrandoGasto] = useState(false);
+
+  const [gastos, setGastos] = useState([]);
+  const [cargandoGastos, setCargandoGastos] = useState(true);
+  const [errorGastos, setErrorGastos] = useState("");
 
   const [participanteEditando, setParticipanteEditando] = useState(null);
   const [notaTemporal, setNotaTemporal] = useState("");
@@ -126,6 +144,53 @@ function GroupDetail() {
 
     obtenerUsuarios();
   }, []);
+
+  useEffect(() => {
+    const obtenerGastos = async () => {
+      const token = localStorage.getItem("access");
+
+      if (!token) {
+        setErrorGastos(
+          "Tu sesión ha expirado. Inicia sesión nuevamente."
+        );
+        setCargandoGastos(false);
+        return;
+      }
+
+      try {
+        setErrorGastos("");
+
+        const response = await fetch(
+          `http://127.0.0.1:8000/api/grupos/${id}/gastos/`,
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || "No se pudieron cargar los gastos."
+          );
+        }
+
+        setGastos(Array.isArray(data.gastos) ? data.gastos : []);
+      } catch (errorListado) {
+        setErrorGastos(
+          errorListado.message ||
+            "No se pudieron cargar los gastos del grupo."
+        );
+      } finally {
+        setCargandoGastos(false);
+      }
+    };
+
+    obtenerGastos();
+  }, [id]);
 
   const handleChange = (e) => {
     setFormData({
@@ -383,6 +448,14 @@ function GroupDetail() {
 
       setParticipantesGasto([]);
 
+      if (data.gasto) {
+        setGastos((gastosActuales) => [
+          data.gasto,
+          ...gastosActuales,
+        ]);
+      }
+
+      setErrorGastos("");
       setMensaje(
         data.mensaje || "Gasto registrado correctamente."
       );
@@ -1229,6 +1302,124 @@ function GroupDetail() {
                             </button>
                           </div>
                         </form>
+                      </div>
+
+                      <div className="mt-5 pt-4 border-top">
+                        <div className="d-flex justify-content-between align-items-center">
+                          <div>
+                            <h5 className="mb-1">
+                              Gastos del grupo
+                            </h5>
+
+                            <small className="text-muted">
+                              Total de gastos registrados:{" "}
+                              {gastos.length}
+                            </small>
+                          </div>
+                        </div>
+
+                        {cargandoGastos ? (
+                          <div
+                            className="alert alert-light border mt-3"
+                            role="alert"
+                          >
+                            Cargando gastos del grupo...
+                          </div>
+                        ) : errorGastos ? (
+                          <div
+                            className="alert alert-danger mt-3"
+                            role="alert"
+                          >
+                            {errorGastos}
+                          </div>
+                        ) : gastos.length === 0 ? (
+                          <div className="empty-groups-card mt-3">
+                            <h5>No hay gastos registrados</h5>
+
+                            <p>
+                              Cuando registres un gasto aparecerá
+                              automáticamente en esta sección.
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="mt-3">
+                            {gastos.map((gasto) => (
+                              <div
+                                key={gasto.id}
+                                className="border rounded p-3 mb-3"
+                              >
+                                <div className="d-flex justify-content-between align-items-start gap-3">
+                                  <div>
+                                    <h6 className="mb-1">
+                                      {gasto.descripcion}
+                                    </h6>
+
+                                    <small className="text-muted">
+                                      Fecha:{" "}
+                                      {formatearFecha(
+                                        gasto.fecha_gasto
+                                      )}
+                                    </small>
+                                  </div>
+
+                                  <strong className="fs-5">
+                                    {formatearMonto(gasto.monto)}
+                                  </strong>
+                                </div>
+
+                                <div className="mt-3">
+                                  <small className="text-muted">
+                                    Pagado por
+                                  </small>
+
+                                  <div>
+                                    <strong>
+                                      {gasto.pagado_por
+                                        ?.nombre_completo ||
+                                        gasto.pagado_por
+                                          ?.username ||
+                                        "Sin información"}
+                                    </strong>
+
+                                    {gasto.pagado_por?.username && (
+                                      <span className="text-muted">
+                                        {" "}
+                                        (@
+                                        {
+                                          gasto.pagado_por
+                                            .username
+                                        }
+                                        )
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="mt-3">
+                                  <small className="text-muted">
+                                    Participantes incluidos:{" "}
+                                    {gasto.participantes?.length ||
+                                      0}
+                                  </small>
+
+                                  <div className="d-flex flex-wrap gap-2 mt-2">
+                                    {gasto.participantes?.map(
+                                      (participante) => (
+                                        <span
+                                          key={participante.id}
+                                          className="badge bg-light text-dark border"
+                                        >
+                                          {participante.nombre_completo ||
+                                            participante.username}
+                                        </span>
+                                      )
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     </div>
 
