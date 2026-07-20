@@ -232,3 +232,55 @@ class ExpenseCreateView(APIView):
             },
             status=status.HTTP_201_CREATED
         )
+    
+class ExpenseDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, grupo_id, gasto_id):
+        grupo = Group.objects.filter(
+            id=grupo_id,
+            creador=request.user
+        ).first()
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar sus gastos."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        gasto = (
+            Expense.objects
+            .filter(
+                id=gasto_id,
+                grupo=grupo
+            )
+            .select_related(
+                "grupo",
+                "pagado_por",
+                "registrado_por"
+            )
+            .prefetch_related("participantes")
+            .first()
+        )
+
+        if not gasto:
+            return Response(
+                {
+                    "error": (
+                        "El gasto no existe o no pertenece a este grupo."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        return Response(
+            {
+                "gasto": ExpenseSerializer(gasto).data
+            },
+            status=status.HTTP_200_OK
+        )
