@@ -1,12 +1,18 @@
 from decimal import Decimal
 
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models, transaction
 from django.utils import timezone
 
 
 class Group(models.Model):
+    ESTADO_SIN_CONFIGURAR = "sin_configurar"
+    ESTADO_PROGRAMADA = "programada"
+    ESTADO_ACTIVA = "activa"
+    ESTADO_CERRADA = "cerrada"
+
     nombre = models.CharField(max_length=100)
     descripcion = models.TextField(blank=True, null=True)
 
@@ -22,13 +28,69 @@ class Group(models.Model):
         blank=True,
     )
 
-    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_inicio = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    fecha_fin = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    fecha_creacion = models.DateTimeField(
+        auto_now_add=True,
+    )
 
     class Meta:
         ordering = ["-fecha_creacion"]
 
     def __str__(self):
         return self.nombre
+
+    def clean(self):
+        super().clean()
+
+        if self.fecha_inicio and not self.fecha_fin:
+            raise ValidationError({
+                "fecha_fin": (
+                    "Debes establecer la fecha y hora de finalización."
+                )
+            })
+
+        if self.fecha_fin and not self.fecha_inicio:
+            raise ValidationError({
+                "fecha_inicio": (
+                    "Debes establecer la fecha y hora de inicio."
+                )
+            })
+
+        if (
+            self.fecha_inicio
+            and self.fecha_fin
+            and self.fecha_fin <= self.fecha_inicio
+        ):
+            raise ValidationError({
+                "fecha_fin": (
+                    "La fecha y hora de finalización debe ser "
+                    "posterior a la fecha y hora de inicio."
+                )
+            })
+
+    @property
+    def estado(self):
+        if not self.fecha_inicio or not self.fecha_fin:
+            return self.ESTADO_SIN_CONFIGURAR
+
+        fecha_actual = timezone.now()
+
+        if fecha_actual < self.fecha_inicio:
+            return self.ESTADO_PROGRAMADA
+
+        if fecha_actual <= self.fecha_fin:
+            return self.ESTADO_ACTIVA
+
+        return self.ESTADO_CERRADA
 
 
 class Expense(models.Model):

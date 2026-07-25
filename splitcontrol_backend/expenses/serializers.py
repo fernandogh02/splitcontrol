@@ -41,6 +41,20 @@ class GroupSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
+    estado = serializers.CharField(
+        read_only=True,
+    )
+
+    fecha_inicio = serializers.DateTimeField(
+        required=False,
+        allow_null=False,
+    )
+
+    fecha_fin = serializers.DateTimeField(
+        required=False,
+        allow_null=False,
+    )
+
     class Meta:
         model = Group
         fields = [
@@ -49,6 +63,9 @@ class GroupSerializer(serializers.ModelSerializer):
             "descripcion",
             "creador_username",
             "participantes",
+            "fecha_inicio",
+            "fecha_fin",
+            "estado",
             "fecha_creacion",
         ]
 
@@ -56,8 +73,76 @@ class GroupSerializer(serializers.ModelSerializer):
             "id",
             "creador_username",
             "participantes",
+            "estado",
             "fecha_creacion",
         ]
+
+    def validate_nombre(self, value):
+        nombre = value.strip()
+
+        if not nombre:
+            raise serializers.ValidationError(
+                "El nombre de la actividad es obligatorio."
+            )
+
+        return nombre
+
+    def validate(self, attrs):
+        fecha_inicio = attrs.get(
+            "fecha_inicio",
+            getattr(self.instance, "fecha_inicio", None),
+        )
+
+        fecha_fin = attrs.get(
+            "fecha_fin",
+            getattr(self.instance, "fecha_fin", None),
+        )
+
+        if self.instance is None:
+            errores = {}
+
+            if not fecha_inicio:
+                errores["fecha_inicio"] = (
+                    "Debes establecer la fecha y hora de inicio."
+                )
+
+            if not fecha_fin:
+                errores["fecha_fin"] = (
+                    "Debes establecer la fecha y hora "
+                    "de finalización."
+                )
+
+            if errores:
+                raise serializers.ValidationError(errores)
+
+        if fecha_inicio and not fecha_fin:
+            raise serializers.ValidationError({
+                "fecha_fin": (
+                    "Debes establecer la fecha y hora "
+                    "de finalización."
+                )
+            })
+
+        if fecha_fin and not fecha_inicio:
+            raise serializers.ValidationError({
+                "fecha_inicio": (
+                    "Debes establecer la fecha y hora de inicio."
+                )
+            })
+
+        if (
+            fecha_inicio
+            and fecha_fin
+            and fecha_fin <= fecha_inicio
+        ):
+            raise serializers.ValidationError({
+                "fecha_fin": (
+                    "La fecha y hora de finalización debe ser "
+                    "posterior a la fecha y hora de inicio."
+                )
+            })
+
+        return attrs
 
 
 class ExpenseDivisionSerializer(serializers.ModelSerializer):
