@@ -2,7 +2,12 @@ from django.contrib.auth.models import User
 from django.db import transaction
 from rest_framework import serializers
 
-from .models import Expense, ExpenseDivision, Group
+from .models import (
+    Expense,
+    ExpenseDivision,
+    Group,
+    Payment,
+)
 
 
 class UserSimpleSerializer(serializers.ModelSerializer):
@@ -238,3 +243,113 @@ class ExpenseSerializer(serializers.ModelSerializer):
         gasto.calcular_division_equitativa()
 
         return gasto
+
+
+class PaymentSerializer(serializers.ModelSerializer):
+    pagador = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    pagador_id = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        source="pagador",
+        write_only=True,
+    )
+
+    receptor = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    receptor_id = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        source="receptor",
+        write_only=True,
+    )
+
+    registrado_por = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    class Meta:
+        model = Payment
+        fields = [
+            "id",
+            "grupo",
+            "pagador",
+            "pagador_id",
+            "receptor",
+            "receptor_id",
+            "monto",
+            "fecha_pago",
+            "registrado_por",
+            "fecha_registro",
+        ]
+
+        read_only_fields = [
+            "id",
+            "grupo",
+            "pagador",
+            "receptor",
+            "registrado_por",
+            "fecha_registro",
+        ]
+
+    def validate(self, attrs):
+        grupo = self.context.get("grupo")
+
+        pagador = attrs.get(
+            "pagador",
+            getattr(self.instance, "pagador", None),
+        )
+
+        receptor = attrs.get(
+            "receptor",
+            getattr(self.instance, "receptor", None),
+        )
+
+        if not grupo:
+            raise serializers.ValidationError(
+                "No se pudo identificar el grupo."
+            )
+
+        if not pagador:
+            raise serializers.ValidationError({
+                "pagador_id": (
+                    "Debe seleccionar quién realiza el pago."
+                )
+            })
+
+        if not receptor:
+            raise serializers.ValidationError({
+                "receptor_id": (
+                    "Debe seleccionar quién recibe el pago."
+                )
+            })
+
+        if pagador.id == receptor.id:
+            raise serializers.ValidationError({
+                "receptor_id": (
+                    "El pagador y el receptor deben ser "
+                    "personas diferentes."
+                )
+            })
+
+        if not grupo.participantes.filter(
+            id=pagador.id
+        ).exists():
+            raise serializers.ValidationError({
+                "pagador_id": (
+                    "La persona que paga debe pertenecer al grupo."
+                )
+            })
+
+        if not grupo.participantes.filter(
+            id=receptor.id
+        ).exists():
+            raise serializers.ValidationError({
+                "receptor_id": (
+                    "La persona que recibe debe pertenecer al grupo."
+                )
+            })
+
+        return attrs

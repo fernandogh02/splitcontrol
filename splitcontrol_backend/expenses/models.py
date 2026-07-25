@@ -178,3 +178,66 @@ class ExpenseDivision(models.Model):
             f"{self.participante.username} debe "
             f"${self.monto_asignado} en {self.gasto.descripcion}"
         )
+
+
+class Payment(models.Model):
+    grupo = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name="pagos",
+    )
+
+    pagador = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="pagos_realizados",
+    )
+
+    receptor = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="pagos_recibidos",
+    )
+
+    monto = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[
+            MinValueValidator(
+                Decimal("0.01"),
+                message="El monto del pago debe ser mayor que cero.",
+            )
+        ],
+    )
+
+    fecha_pago = models.DateField(
+        default=timezone.localdate,
+    )
+
+    registrado_por = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="pagos_registrados",
+    )
+
+    fecha_registro = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    class Meta:
+        ordering = ["-fecha_pago", "-fecha_registro"]
+
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(
+                    pagador=models.F("receptor")
+                ),
+                name="pago_pagador_receptor_diferentes",
+            )
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.pagador.username} pagó "
+            f"${self.monto} a {self.receptor.username}"
+        )

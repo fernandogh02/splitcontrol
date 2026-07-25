@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from expenses.models import Expense, Group
+from expenses.models import Expense, Group, Payment
 
 
 class PruebaApiBackendTest(APITestCase):
@@ -575,3 +575,257 @@ class ActualizacionBalancesAlRegistrarGastoTest(APITestCase):
                 balance_participante["estado"],
                 "debe",
             )
+
+
+class RegistroPagoTest(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc43",
+            email="fernando_sc43@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc43",
+            email="carlita_sc43@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc43",
+            email="damarys_sc43@example.com",
+            password="Prueba123",
+        )
+
+        self.usuario_externo = User.objects.create_user(
+            username="externo_sc43",
+            email="externo_sc43@example.com",
+            password="Prueba123",
+        )
+
+        self.grupo = Group.objects.create(
+            nombre="Grupo SC-43",
+            descripcion="Pruebas para registrar pagos",
+            creador=self.fernando,
+        )
+
+        self.grupo.participantes.add(
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        )
+
+        self.url = (
+            f"/api/grupos/{self.grupo.id}/pagos/"
+        )
+
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+    def test_registrar_pago_correctamente(self):
+        response = self.client.post(
+            self.url,
+            {
+                "pagador_id": self.carlita.id,
+                "receptor_id": self.fernando.id,
+                "monto": "15.50",
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            "Pago registrado correctamente.",
+        )
+
+        self.assertEqual(
+            Payment.objects.count(),
+            1,
+        )
+
+        pago = Payment.objects.get()
+
+        self.assertEqual(
+            pago.grupo,
+            self.grupo,
+        )
+
+        self.assertEqual(
+            pago.pagador,
+            self.carlita,
+        )
+
+        self.assertEqual(
+            pago.receptor,
+            self.fernando,
+        )
+
+        self.assertEqual(
+            pago.monto,
+            Decimal("15.50"),
+        )
+
+        self.assertEqual(
+            pago.registrado_por,
+            self.fernando,
+        )
+
+        self.assertEqual(
+            response.data["pago"]["pagador"]["username"],
+            "carlita_sc43",
+        )
+
+        self.assertEqual(
+            response.data["pago"]["receptor"]["username"],
+            "fernando_sc43",
+        )
+
+    def test_no_permite_pago_a_la_misma_persona(self):
+        response = self.client.post(
+            self.url,
+            {
+                "pagador_id": self.carlita.id,
+                "receptor_id": self.carlita.id,
+                "monto": "10.00",
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "receptor_id",
+            response.data,
+        )
+
+        self.assertEqual(
+            Payment.objects.count(),
+            0,
+        )
+
+    def test_pagador_debe_pertenecer_al_grupo(self):
+        response = self.client.post(
+            self.url,
+            {
+                "pagador_id": self.usuario_externo.id,
+                "receptor_id": self.fernando.id,
+                "monto": "10.00",
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "pagador_id",
+            response.data,
+        )
+
+        self.assertEqual(
+            Payment.objects.count(),
+            0,
+        )
+
+    def test_receptor_debe_pertenecer_al_grupo(self):
+        response = self.client.post(
+            self.url,
+            {
+                "pagador_id": self.carlita.id,
+                "receptor_id": self.usuario_externo.id,
+                "monto": "10.00",
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "receptor_id",
+            response.data,
+        )
+
+        self.assertEqual(
+            Payment.objects.count(),
+            0,
+        )
+
+    def test_monto_debe_ser_mayor_que_cero(self):
+        response = self.client.post(
+            self.url,
+            {
+                "pagador_id": self.carlita.id,
+                "receptor_id": self.fernando.id,
+                "monto": "0.00",
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "monto",
+            response.data,
+        )
+
+        self.assertEqual(
+            Payment.objects.count(),
+            0,
+        )
+
+    def test_usuario_no_creador_no_puede_registrar_pago(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response = self.client.post(
+            self.url,
+            {
+                "pagador_id": self.carlita.id,
+                "receptor_id": self.fernando.id,
+                "monto": "10.00",
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertEqual(
+            response.data["error"],
+            (
+                "Grupo no encontrado o no tienes permiso "
+                "para registrar pagos."
+            ),
+        )
+
+        self.assertEqual(
+            Payment.objects.count(),
+            0,
+        )

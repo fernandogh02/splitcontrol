@@ -8,6 +8,7 @@ from .views import (
     GroupDebtView,
     GroupDetailView,
     GroupListCreateView,
+    PaymentCreateView,
     RemoveParticipantView,
     UserListView,
     prueba_api,
@@ -64,5 +65,10 @@ urlpatterns = [
         "grupos/<int:pk>/deudas/",
         GroupDebtView.as_view(),
         name="consultar_deudas_grupo",
+    ),
+    path(
+        "grupos/<int:pk>/pagos/",
+        PaymentCreateView.as_view(),
+        name="registrar_pago",
     ),
 ]

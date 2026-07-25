@@ -7,11 +7,12 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Expense, ExpenseDivision, Group
+from .models import Expense, ExpenseDivision, Group, Payment
 from .services import calcular_deudas_grupo
 from .serializers import (
     ExpenseSerializer,
     GroupSerializer,
+    PaymentSerializer,
     UserSimpleSerializer,
 )
 
@@ -701,4 +702,69 @@ class GroupDebtView(APIView):
                 "deudas": deudas,
             },
             status=status.HTTP_200_OK,
+        )
+
+class PaymentCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        grupo = (
+            Group.objects
+            .filter(
+                id=pk,
+                creador=request.user,
+            )
+            .prefetch_related("participantes")
+            .first()
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para registrar pagos."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = PaymentSerializer(
+            data=request.data,
+            context={
+                "request": request,
+                "grupo": grupo,
+            },
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        pago = serializer.save(
+            grupo=grupo,
+            registrado_por=request.user,
+        )
+
+        pago_registrado = (
+            Payment.objects
+            .select_related(
+                "grupo",
+                "pagador",
+                "receptor",
+                "registrado_por",
+            )
+            .get(id=pago.id)
+        )
+
+        return Response(
+            {
+                "mensaje": "Pago registrado correctamente.",
+                "pago": PaymentSerializer(
+                    pago_registrado
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
         )
