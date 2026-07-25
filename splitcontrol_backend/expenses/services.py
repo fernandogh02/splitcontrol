@@ -2,14 +2,15 @@ from decimal import Decimal
 
 from django.db.models import Sum
 
-from .models import Expense, ExpenseDivision
+from .models import Expense, ExpenseDivision, Payment
 
 
 CERO = Decimal("0.00")
+DOS_DECIMALES = Decimal("0.01")
 
 
 def calcular_balances_grupo(grupo):
-    pagos_agrupados = (
+    gastos_pagados_agrupados = (
         Expense.objects
         .filter(grupo=grupo)
         .values("pagado_por_id")
@@ -23,14 +24,38 @@ def calcular_balances_grupo(grupo):
         .annotate(total=Sum("monto_asignado"))
     )
 
-    pagos_por_participante = {
+    pagos_realizados_agrupados = (
+        Payment.objects
+        .filter(grupo=grupo)
+        .values("pagador_id")
+        .annotate(total=Sum("monto"))
+    )
+
+    pagos_recibidos_agrupados = (
+        Payment.objects
+        .filter(grupo=grupo)
+        .values("receptor_id")
+        .annotate(total=Sum("monto"))
+    )
+
+    gastos_pagados_por_participante = {
         item["pagado_por_id"]: item["total"] or CERO
-        for item in pagos_agrupados
+        for item in gastos_pagados_agrupados
     }
 
     asignado_por_participante = {
         item["participante_id"]: item["total"] or CERO
         for item in valores_asignados
+    }
+
+    pagos_realizados_por_participante = {
+        item["pagador_id"]: item["total"] or CERO
+        for item in pagos_realizados_agrupados
+    }
+
+    pagos_recibidos_por_participante = {
+        item["receptor_id"]: item["total"] or CERO
+        for item in pagos_recibidos_agrupados
     }
 
     balances = []
@@ -42,24 +67,39 @@ def calcular_balances_grupo(grupo):
     )
 
     for participante in participantes:
-        total_pagado = pagos_por_participante.get(
+        total_pagado = gastos_pagados_por_participante.get(
             participante.id,
             CERO,
-        )
+        ).quantize(DOS_DECIMALES)
 
         total_correspondiente = asignado_por_participante.get(
             participante.id,
             CERO,
-        )
+        ).quantize(DOS_DECIMALES)
+
+        pagos_realizados = pagos_realizados_por_participante.get(
+            participante.id,
+            CERO,
+        ).quantize(DOS_DECIMALES)
+
+        pagos_recibidos = pagos_recibidos_por_participante.get(
+            participante.id,
+            CERO,
+        ).quantize(DOS_DECIMALES)
 
         balance = (
-            total_pagado - total_correspondiente
-        ).quantize(Decimal("0.01"))
+            total_pagado
+            - total_correspondiente
+            + pagos_realizados
+            - pagos_recibidos
+        ).quantize(DOS_DECIMALES)
 
         balances.append({
             "participante": participante,
             "total_pagado": total_pagado,
             "total_correspondiente": total_correspondiente,
+            "pagos_realizados": pagos_realizados,
+            "pagos_recibidos": pagos_recibidos,
             "balance": balance,
         })
 
@@ -102,7 +142,7 @@ def calcular_deudas_grupo(grupo):
         monto = min(
             deudor["saldo"],
             acreedor["saldo"],
-        ).quantize(Decimal("0.01"))
+        ).quantize(DOS_DECIMALES)
 
         if monto > CERO:
             deudas.append({
@@ -113,11 +153,11 @@ def calcular_deudas_grupo(grupo):
 
         deudor["saldo"] = (
             deudor["saldo"] - monto
-        ).quantize(Decimal("0.01"))
+        ).quantize(DOS_DECIMALES)
 
         acreedor["saldo"] = (
             acreedor["saldo"] - monto
-        ).quantize(Decimal("0.01"))
+        ).quantize(DOS_DECIMALES)
 
         if deudor["saldo"] == CERO:
             indice_deudor += 1
