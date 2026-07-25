@@ -1,14 +1,13 @@
 from decimal import Decimal
 
 from django.contrib.auth.models import User
-from django.db.models import Sum
 from django.http import JsonResponse
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Expense, ExpenseDivision, Group, Payment
-from .services import calcular_deudas_grupo
+from .models import Expense, Group, Payment
+from .services import calcular_balances_grupo, calcular_deudas_grupo
 from .serializers import (
     ExpenseSerializer,
     GroupSerializer,
@@ -528,58 +527,22 @@ class GroupBalanceView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        pagos_agrupados = (
-            Expense.objects
-            .filter(grupo=grupo)
-            .values("pagado_por_id")
-            .annotate(total=Sum("monto"))
-        )
-
-        valores_asignados = (
-            ExpenseDivision.objects
-            .filter(gasto__grupo=grupo)
-            .values("participante_id")
-            .annotate(total=Sum("monto_asignado"))
-        )
-
-        pagos_por_participante = {
-            item["pagado_por_id"]: (
-                item["total"] or Decimal("0.00")
-            )
-            for item in pagos_agrupados
-        }
-
-        asignado_por_participante = {
-            item["participante_id"]: (
-                item["total"] or Decimal("0.00")
-            )
-            for item in valores_asignados
-        }
+        balances_calculados = calcular_balances_grupo(grupo)
 
         balances = []
         total_pagado_grupo = Decimal("0.00")
         total_correspondiente_grupo = Decimal("0.00")
+        total_pagos_realizados = Decimal("0.00")
+        total_pagos_recibidos = Decimal("0.00")
+        balance_general = Decimal("0.00")
 
-        participantes = grupo.participantes.all().order_by(
-            "username"
-        )
-
-        for participante in participantes:
-            total_pagado = pagos_por_participante.get(
-                participante.id,
-                Decimal("0.00"),
-            )
-
-            total_correspondiente = (
-                asignado_por_participante.get(
-                    participante.id,
-                    Decimal("0.00"),
-                )
-            )
-
-            balance = (
-                total_pagado - total_correspondiente
-            ).quantize(Decimal("0.01"))
+        for item in balances_calculados:
+            participante = item["participante"]
+            total_pagado = item["total_pagado"]
+            total_correspondiente = item["total_correspondiente"]
+            pagos_realizados = item["pagos_realizados"]
+            pagos_recibidos = item["pagos_recibidos"]
+            balance = item["balance"]
 
             if balance > Decimal("0.00"):
                 estado = "a_favor"
@@ -589,9 +552,10 @@ class GroupBalanceView(APIView):
                 estado = "saldado"
 
             total_pagado_grupo += total_pagado
-            total_correspondiente_grupo += (
-                total_correspondiente
-            )
+            total_correspondiente_grupo += total_correspondiente
+            total_pagos_realizados += pagos_realizados
+            total_pagos_recibidos += pagos_recibidos
+            balance_general += balance
 
             balances.append(
                 {
@@ -602,15 +566,20 @@ class GroupBalanceView(APIView):
                     "total_correspondiente": (
                         f"{total_correspondiente:.2f}"
                     ),
+                    "pagos_realizados": (
+                        f"{pagos_realizados:.2f}"
+                    ),
+                    "pagos_recibidos": (
+                        f"{pagos_recibidos:.2f}"
+                    ),
                     "balance": f"{balance:.2f}",
                     "estado": estado,
                 }
             )
 
-        balance_general = (
-            total_pagado_grupo
-            - total_correspondiente_grupo
-        ).quantize(Decimal("0.01"))
+        balance_general = balance_general.quantize(
+            Decimal("0.01")
+        )
 
         return Response(
             {
@@ -623,6 +592,12 @@ class GroupBalanceView(APIView):
                     "total_correspondiente": (
                         f"{total_correspondiente_grupo:.2f}"
                     ),
+                    "total_pagos_realizados": (
+                        f"{total_pagos_realizados:.2f}"
+                    ),
+                    "total_pagos_recibidos": (
+                        f"{total_pagos_recibidos:.2f}"
+                    ),
                     "balance_general": (
                         f"{balance_general:.2f}"
                     ),
@@ -632,6 +607,7 @@ class GroupBalanceView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
 
 class GroupDebtView(APIView):
     permission_classes = [permissions.IsAuthenticated]
