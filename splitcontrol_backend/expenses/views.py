@@ -52,6 +52,10 @@ def obtener_grupo_visible_para_usuario(
     )
 
 
+def grupo_esta_cerrado(grupo):
+    return grupo.estado == Group.ESTADO_CERRADA
+
+
 class GroupListCreateView(generics.ListCreateAPIView):
     serializer_class = GroupSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -122,6 +126,17 @@ class AddParticipantView(APIView):
                     "error": "Grupo no encontrado."
                 },
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if grupo_esta_cerrado(grupo):
+            return Response(
+                {
+                    "error": (
+                        "No se pueden modificar participantes "
+                        "porque la actividad está cerrada."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         usuario_id = request.data.get("usuario_id")
@@ -210,6 +225,17 @@ class RemoveParticipantView(APIView):
                     "error": "Grupo no encontrado."
                 },
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if grupo_esta_cerrado(grupo):
+            return Response(
+                {
+                    "error": (
+                        "No se pueden modificar participantes "
+                        "porque la actividad está cerrada."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         usuario = User.objects.filter(
@@ -390,10 +416,10 @@ class ExpenseCreateView(APIView):
         )
 
     def post(self, request, pk):
-        grupo = Group.objects.filter(
-            id=pk,
-            creador=request.user,
-        ).first()
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
+        )
 
         if not grupo:
             return Response(
@@ -404,6 +430,17 @@ class ExpenseCreateView(APIView):
                     )
                 },
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if grupo_esta_cerrado(grupo):
+            return Response(
+                {
+                    "error": (
+                        "No se pueden registrar gastos porque "
+                        "la actividad está cerrada."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         serializer = ExpenseSerializer(
@@ -525,6 +562,17 @@ class ExpenseDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if grupo_esta_cerrado(grupo):
+            return Response(
+                {
+                    "error": (
+                        "No se pueden modificar gastos porque "
+                        "la actividad está cerrada."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         gasto = (
             Expense.objects
             .filter(
@@ -613,6 +661,17 @@ class ExpenseDetailView(APIView):
                     )
                 },
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if grupo_esta_cerrado(grupo):
+            return Response(
+                {
+                    "error": (
+                        "No se pueden eliminar gastos porque "
+                        "la actividad está cerrada."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         gasto = Expense.objects.filter(
@@ -817,14 +876,9 @@ class PaymentCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
-        grupo = (
-            Group.objects
-            .filter(
-                id=pk,
-                creador=request.user,
-            )
-            .prefetch_related("participantes")
-            .first()
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
         )
 
         if not grupo:
@@ -836,6 +890,17 @@ class PaymentCreateView(APIView):
                     )
                 },
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if grupo_esta_cerrado(grupo):
+            return Response(
+                {
+                    "error": (
+                        "No se pueden registrar pagos porque "
+                        "la actividad está cerrada."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         serializer = PaymentSerializer(
@@ -854,6 +919,7 @@ class PaymentCreateView(APIView):
 
         pago = serializer.save(
             grupo=grupo,
+            pagador=request.user,
             registrado_por=request.user,
         )
 
