@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.db.models import Q
 from django.http import JsonResponse
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
@@ -24,13 +25,43 @@ def prueba_api(request):
     })
 
 
+def grupos_visibles_para_usuario(usuario):
+    return (
+        Group.objects
+        .filter(
+            Q(creador=usuario)
+            | Q(
+                membresias__usuario=usuario,
+                membresias__activo=True,
+            )
+        )
+        .select_related("creador")
+        .prefetch_related("participantes")
+        .distinct()
+    )
+
+
+def obtener_grupo_visible_para_usuario(
+    usuario,
+    grupo_id,
+):
+    return (
+        grupos_visibles_para_usuario(usuario)
+        .filter(id=grupo_id)
+        .first()
+    )
+
+
 class GroupListCreateView(generics.ListCreateAPIView):
     serializer_class = GroupSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Group.objects.filter(
-            creador=self.request.user
+        return (
+            grupos_visibles_para_usuario(
+                self.request.user
+            )
+            .order_by("-fecha_creacion")
         )
 
     @transaction.atomic
@@ -54,6 +85,11 @@ class GroupDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
+        if self.request.method == "GET":
+            return grupos_visibles_para_usuario(
+                self.request.user
+            )
+
         return Group.objects.filter(
             creador=self.request.user
         )
@@ -245,10 +281,10 @@ class GroupMembershipHistoryView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, pk):
-        grupo = Group.objects.filter(
-            id=pk,
-            creador=request.user,
-        ).first()
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
+        )
 
         if not grupo:
             return Response(
@@ -304,10 +340,10 @@ class ExpenseCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, pk):
-        grupo = Group.objects.filter(
-            id=pk,
-            creador=request.user,
-        ).first()
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
+        )
 
         if not grupo:
             return Response(
@@ -420,10 +456,10 @@ class ExpenseDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, grupo_id, gasto_id):
-        grupo = Group.objects.filter(
-            id=grupo_id,
-            creador=request.user,
-        ).first()
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            grupo_id,
+        )
 
         if not grupo:
             return Response(
@@ -612,14 +648,9 @@ class GroupBalanceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, pk):
-        grupo = (
-            Group.objects
-            .filter(
-                id=pk,
-                creador=request.user,
-            )
-            .prefetch_related("participantes")
-            .first()
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
         )
 
         if not grupo:
@@ -719,14 +750,9 @@ class GroupDebtView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, pk):
-        grupo = (
-            Group.objects
-            .filter(
-                id=pk,
-                creador=request.user,
-            )
-            .prefetch_related("participantes")
-            .first()
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
         )
 
         if not grupo:
