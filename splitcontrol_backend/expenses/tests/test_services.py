@@ -3,7 +3,11 @@ from decimal import Decimal
 from django.contrib.auth.models import User
 from django.test import TestCase
 
-from expenses.models import Expense, Group
+from expenses.models import (
+    Expense,
+    Group,
+    GroupMembership,
+)
 from expenses.services import calcular_deudas_grupo
 
 
@@ -30,7 +34,7 @@ class DivisionGastoTest(TestCase):
 
         self.grupo = Group.objects.create(
             nombre="Viaje",
-            descripcion="Gastos del viaje",
+            descripcion="Gastos comunes del viaje",
             creador=self.carlita,
         )
 
@@ -40,81 +44,107 @@ class DivisionGastoTest(TestCase):
             self.carlita,
         )
 
+        self.membresia_andres = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.andres,
+        )
+
+        self.membresia_damarys = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.damarys,
+        )
+
+        self.membresia_carlita = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.carlita,
+        )
+
     def crear_gasto(self, monto=Decimal("60.00")):
         gasto = Expense.objects.create(
             grupo=self.grupo,
             descripcion="Cena",
             monto=monto,
-            pagado_por=self.carlita,
             registrado_por=self.carlita,
         )
 
+        gasto.sincronizar_integrantes_activos()
+
         return gasto
 
-    def test_dividir_solo_entre_participantes_seleccionados(self):
+    def test_asocia_automaticamente_integrantes_activos(self):
         gasto = self.crear_gasto()
 
-        gasto.participantes.add(
-            self.andres,
-            self.damarys,
+        participantes_asociados = set(
+            gasto.participantes.values_list(
+                "id",
+                flat=True,
+            )
         )
 
-        gasto.calcular_division_equitativa()
-
-        divisiones = gasto.divisiones.all()
-
         participantes_divididos = set(
-            divisiones.values_list(
+            gasto.divisiones.values_list(
                 "participante_id",
                 flat=True,
             )
         )
 
-        self.assertEqual(divisiones.count(), 2)
+        esperados = {
+            self.andres.id,
+            self.damarys.id,
+            self.carlita.id,
+        }
+
+        self.assertSetEqual(
+            participantes_asociados,
+            esperados,
+        )
+
+        self.assertSetEqual(
+            participantes_divididos,
+            esperados,
+        )
+
+        self.assertEqual(
+            gasto.divisiones.count(),
+            3,
+        )
+
+    def test_membresia_retirada_no_recibe_division(self):
+        self.membresia_damarys.retirar()
+
+        gasto = self.crear_gasto()
+
+        participantes_divididos = set(
+            gasto.divisiones.values_list(
+                "participante_id",
+                flat=True,
+            )
+        )
 
         self.assertSetEqual(
             participantes_divididos,
             {
                 self.andres.id,
-                self.damarys.id,
+                self.carlita.id,
             },
         )
 
         self.assertFalse(
-            divisiones.filter(
-                participante=self.carlita
+            gasto.participantes.filter(
+                id=self.damarys.id
             ).exists()
         )
 
-    def test_participante_no_seleccionado_no_recibe_division(self):
-        gasto = self.crear_gasto()
-
-        gasto.participantes.add(
-            self.andres,
-            self.damarys,
-        )
-
-        gasto.calcular_division_equitativa()
-
-        division_carlita = gasto.divisiones.filter(
-            participante=self.carlita
-        )
-
         self.assertFalse(
-            division_carlita.exists()
+            gasto.divisiones.filter(
+                participante=self.damarys
+            ).exists()
         )
 
     def test_suma_divisiones_coincide_con_monto_total(self):
         gasto = self.crear_gasto(
             monto=Decimal("42.50")
         )
-
-        gasto.participantes.add(
-            self.andres,
-            self.damarys,
-        )
-
-        gasto.calcular_division_equitativa()
 
         total_dividido = sum(
             (
@@ -129,62 +159,56 @@ class DivisionGastoTest(TestCase):
             Decimal("42.50"),
         )
 
+        self.assertEqual(
+            gasto.divisiones.count(),
+            3,
+        )
+
+    def test_recalcular_actualiza_divisiones(self):
+        gasto = self.crear_gasto(
+            monto=Decimal("60.00")
+        )
+
         for division in gasto.divisiones.all():
             self.assertEqual(
                 division.monto_asignado,
-                Decimal("21.25"),
+                Decimal("20.00"),
             )
 
-    def test_recalcular_elimina_participantes_anteriores(self):
-        gasto = self.crear_gasto()
-
-        gasto.participantes.add(
-            self.andres,
-            self.damarys,
-        )
-
+        gasto.monto = Decimal("90.00")
+        gasto.save(update_fields=["monto"])
         gasto.calcular_division_equitativa()
 
-        gasto.participantes.set([
-            self.damarys,
-            self.carlita,
-        ])
-
-        gasto.calcular_division_equitativa()
-
-        participantes_divididos = set(
+        divisiones_actualizadas = list(
             gasto.divisiones.values_list(
-                "participante_id",
+                "monto_asignado",
                 flat=True,
             )
         )
 
-        self.assertSetEqual(
-            participantes_divididos,
-            {
-                self.damarys.id,
-                self.carlita.id,
-            },
+        self.assertEqual(
+            len(divisiones_actualizadas),
+            3,
         )
 
-        self.assertFalse(
-            gasto.divisiones.filter(
-                participante=self.andres
-            ).exists()
+        for monto in divisiones_actualizadas:
+            self.assertEqual(
+                monto,
+                Decimal("30.00"),
+            )
+
+        self.assertEqual(
+            sum(
+                divisiones_actualizadas,
+                Decimal("0.00"),
+            ),
+            Decimal("90.00"),
         )
 
     def test_repartir_centavos_sin_perder_dinero(self):
         gasto = self.crear_gasto(
             monto=Decimal("10.00")
         )
-
-        gasto.participantes.add(
-            self.andres,
-            self.damarys,
-            self.carlita,
-        )
-
-        gasto.calcular_division_equitativa()
 
         montos = list(
             gasto.divisiones
@@ -214,32 +238,26 @@ class CalculoDeudasGrupoTest(TestCase):
 
     def setUp(self):
         self.andres = User.objects.create_user(
-            username="andres",
-            email="andres@example.com",
+            username="andres_deudas",
+            email="andres_deudas@example.com",
             password="Prueba123",
         )
 
         self.damarys = User.objects.create_user(
-            username="damarys",
-            email="damarys@example.com",
+            username="damarys_deudas",
+            email="damarys_deudas@example.com",
             password="Prueba123",
         )
 
         self.carlita = User.objects.create_user(
-            username="carlita",
-            email="carlita@example.com",
-            password="Prueba123",
-        )
-
-        self.fernando = User.objects.create_user(
-            username="fernando",
-            email="fernando@example.com",
+            username="carlita_deudas",
+            email="carlita_deudas@example.com",
             password="Prueba123",
         )
 
         self.grupo = Group.objects.create(
-            nombre="Grupo de deudas",
-            descripcion="Pruebas de cálculo de deudas",
+            nombre="Grupo de deudas comunes",
+            descripcion="Pruebas del modelo de gasto común",
             creador=self.damarys,
         )
 
@@ -247,144 +265,80 @@ class CalculoDeudasGrupoTest(TestCase):
             self.andres,
             self.damarys,
             self.carlita,
-            self.fernando,
         )
+
+        for usuario in [
+            self.andres,
+            self.damarys,
+            self.carlita,
+        ]:
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=usuario,
+            )
 
     def crear_gasto(
         self,
         descripcion,
         monto,
-        pagado_por,
-        participantes,
     ):
         gasto = Expense.objects.create(
             grupo=self.grupo,
             descripcion=descripcion,
             monto=monto,
-            pagado_por=pagado_por,
             registrado_por=self.damarys,
         )
 
-        gasto.participantes.set(participantes)
-        gasto.calcular_division_equitativa()
+        gasto.sincronizar_integrantes_activos()
 
         return gasto
 
-    def test_calcular_deuda_simple_entre_dos_participantes(self):
+    def test_gasto_comun_sin_pagos_no_genera_deudas_directas(self):
         self.crear_gasto(
             descripcion="Cena",
             monto=Decimal("42.50"),
-            pagado_por=self.andres,
-            participantes=[
-                self.andres,
-                self.damarys,
-            ],
         )
 
-        deudas = calcular_deudas_grupo(self.grupo)
-
-        self.assertEqual(
-            len(deudas),
-            1,
-        )
-
-        deuda = deudas[0]
-
-        self.assertEqual(
-            deuda["deudor"],
-            self.damarys,
+        deudas = calcular_deudas_grupo(
+            self.grupo
         )
 
         self.assertEqual(
-            deuda["acreedor"],
-            self.andres,
+            deudas,
+            [],
         )
 
-        self.assertEqual(
-            deuda["monto"],
-            Decimal("21.25"),
-        )
-
-    def test_calcular_deudas_con_varios_deudores_y_acreedores(self):
+    def test_varios_gastos_comunes_sin_pagos_no_generan_deudas_directas(
+        self,
+    ):
         self.crear_gasto(
             descripcion="Hospedaje",
-            monto=Decimal("80.00"),
-            pagado_por=self.andres,
-            participantes=[
-                self.andres,
-                self.damarys,
-                self.carlita,
-                self.fernando,
-            ],
+            monto=Decimal("90.00"),
         )
 
         self.crear_gasto(
             descripcion="Transporte",
-            monto=Decimal("60.00"),
-            pagado_por=self.damarys,
-            participantes=[
-                self.damarys,
-                self.carlita,
-                self.fernando,
-            ],
+            monto=Decimal("30.00"),
         )
 
-        deudas = calcular_deudas_grupo(self.grupo)
-
-        resultado = [
-            (
-                deuda["deudor"].username,
-                deuda["acreedor"].username,
-                deuda["monto"],
-            )
-            for deuda in deudas
-        ]
-
-        self.assertEqual(
-            resultado,
-            [
-                (
-                    "carlita",
-                    "andres",
-                    Decimal("40.00"),
-                ),
-                (
-                    "fernando",
-                    "andres",
-                    Decimal("20.00"),
-                ),
-                (
-                    "fernando",
-                    "damarys",
-                    Decimal("20.00"),
-                ),
-            ],
-        )
-
-        monto_total_deudas = sum(
-            (
-                deuda["monto"]
-                for deuda in deudas
-            ),
-            Decimal("0.00"),
+        deudas = calcular_deudas_grupo(
+            self.grupo
         )
 
         self.assertEqual(
-            monto_total_deudas,
-            Decimal("80.00"),
+            deudas,
+            [],
         )
 
-    def test_grupo_saldado_no_genera_deudas(self):
-        self.crear_gasto(
-            descripcion="Compra individual",
-            monto=Decimal("15.00"),
-            pagado_por=self.andres,
-            participantes=[
-                self.andres,
-            ],
+        self.assertEqual(
+            self.grupo.total_gastos,
+            Decimal("120.00"),
         )
 
-        deudas = calcular_deudas_grupo(self.grupo)
+    def test_grupo_sin_gastos_no_genera_deudas(self):
+        deudas = calcular_deudas_grupo(
+            self.grupo
+        )
 
         self.assertEqual(
             deudas,

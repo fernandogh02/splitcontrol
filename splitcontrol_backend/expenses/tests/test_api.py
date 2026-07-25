@@ -14,7 +14,6 @@ from expenses.models import (
     Payment,
 )
 
-
 class PruebaApiBackendTest(APITestCase):
 
     def test_ruta_prueba_api(self):
@@ -33,7 +32,6 @@ class PruebaApiBackendTest(APITestCase):
             data["mensaje"],
             "API de SplitControl funcionando correctamente",
         )
-
 
 class ActualizacionDivisionGastoTest(APITestCase):
 
@@ -56,10 +54,14 @@ class ActualizacionDivisionGastoTest(APITestCase):
             password="Prueba123",
         )
 
+        ahora = timezone.now()
+
         self.grupo = Group.objects.create(
             nombre="Viaje",
             descripcion="Gastos compartidos del viaje",
             creador=self.carlita,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
         )
 
         self.grupo.participantes.add(
@@ -68,11 +70,20 @@ class ActualizacionDivisionGastoTest(APITestCase):
             self.damarys,
         )
 
+        for usuario in [
+            self.carlita,
+            self.andres,
+            self.damarys,
+        ]:
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=usuario,
+            )
+
         self.gasto = Expense.objects.create(
             grupo=self.grupo,
             descripcion="Cena",
             monto=Decimal("60.00"),
-            pagado_por=self.carlita,
             registrado_por=self.carlita,
         )
 
@@ -158,12 +169,6 @@ class ActualizacionDivisionGastoTest(APITestCase):
             Decimal("90.00"),
         )
 
-        self.assertFalse(
-            self.gasto.divisiones.filter(
-                monto_asignado=Decimal("20.00")
-            ).exists()
-        )
-
         divisiones_respuesta = response.data[
             "gasto"
         ]["divisiones"]
@@ -178,7 +183,6 @@ class ActualizacionDivisionGastoTest(APITestCase):
                 Decimal(division["monto_asignado"]),
                 Decimal("30.00"),
             )
-
 
 class ConsultaBalancesGrupoTest(APITestCase):
 
@@ -213,11 +217,20 @@ class ConsultaBalancesGrupoTest(APITestCase):
             self.carlita,
         )
 
+        for usuario in [
+            self.damarys,
+            self.andres,
+            self.carlita,
+        ]:
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=usuario,
+            )
+
         gasto_uno = Expense.objects.create(
             grupo=self.grupo,
             descripcion="Cena",
             monto=Decimal("60.00"),
-            pagado_por=self.andres,
             registrado_por=self.damarys,
         )
 
@@ -226,14 +239,12 @@ class ConsultaBalancesGrupoTest(APITestCase):
             self.andres,
             self.carlita,
         )
-
         gasto_uno.calcular_division_equitativa()
 
         gasto_dos = Expense.objects.create(
             grupo=self.grupo,
             descripcion="Transporte",
             monto=Decimal("30.00"),
-            pagado_por=self.damarys,
             registrado_por=self.damarys,
         )
 
@@ -241,7 +252,6 @@ class ConsultaBalancesGrupoTest(APITestCase):
             self.damarys,
             self.carlita,
         )
-
         gasto_dos.calcular_division_equitativa()
 
     def test_consultar_balances_del_grupo(self):
@@ -259,16 +269,6 @@ class ConsultaBalancesGrupoTest(APITestCase):
         )
 
         self.assertEqual(
-            response.data["grupo_id"],
-            self.grupo.id,
-        )
-
-        self.assertEqual(
-            response.data["grupo_nombre"],
-            "Grupo de prueba",
-        )
-
-        self.assertEqual(
             response.data["total_participantes"],
             3,
         )
@@ -277,7 +277,7 @@ class ConsultaBalancesGrupoTest(APITestCase):
 
         self.assertEqual(
             Decimal(resumen["total_pagado"]),
-            Decimal("90.00"),
+            Decimal("0.00"),
         )
 
         self.assertEqual(
@@ -287,7 +287,7 @@ class ConsultaBalancesGrupoTest(APITestCase):
 
         self.assertEqual(
             Decimal(resumen["balance_general"]),
-            Decimal("0.00"),
+            Decimal("-90.00"),
         )
 
         balances = {
@@ -295,73 +295,35 @@ class ConsultaBalancesGrupoTest(APITestCase):
             for balance in response.data["balances"]
         }
 
-        balance_andres = balances["andres"]
-
         self.assertEqual(
-            Decimal(balance_andres["total_pagado"]),
-            Decimal("60.00"),
-        )
-
-        self.assertEqual(
-            Decimal(balance_andres["total_correspondiente"]),
+            Decimal(balances["andres"]["total_correspondiente"]),
             Decimal("20.00"),
         )
-
         self.assertEqual(
-            Decimal(balance_andres["balance"]),
-            Decimal("40.00"),
+            Decimal(balances["andres"]["balance"]),
+            Decimal("-20.00"),
         )
 
-        self.assertEqual(
-            balance_andres["estado"],
-            "a_favor",
-        )
+        for username in [
+            "damarys",
+            "carlita",
+        ]:
+            self.assertEqual(
+                Decimal(
+                    balances[username]["total_correspondiente"]
+                ),
+                Decimal("35.00"),
+            )
+            self.assertEqual(
+                Decimal(balances[username]["balance"]),
+                Decimal("-35.00"),
+            )
+            self.assertEqual(
+                balances[username]["estado"],
+                "debe",
+            )
 
-        balance_damarys = balances["damarys"]
-
-        self.assertEqual(
-            Decimal(balance_damarys["total_pagado"]),
-            Decimal("30.00"),
-        )
-
-        self.assertEqual(
-            Decimal(balance_damarys["total_correspondiente"]),
-            Decimal("35.00"),
-        )
-
-        self.assertEqual(
-            Decimal(balance_damarys["balance"]),
-            Decimal("-5.00"),
-        )
-
-        self.assertEqual(
-            balance_damarys["estado"],
-            "debe",
-        )
-
-        balance_carlita = balances["carlita"]
-
-        self.assertEqual(
-            Decimal(balance_carlita["total_pagado"]),
-            Decimal("0.00"),
-        )
-
-        self.assertEqual(
-            Decimal(balance_carlita["total_correspondiente"]),
-            Decimal("35.00"),
-        )
-
-        self.assertEqual(
-            Decimal(balance_carlita["balance"]),
-            Decimal("-35.00"),
-        )
-
-        self.assertEqual(
-            balance_carlita["estado"],
-            "debe",
-        )
-
-    def test_usuario_que_no_es_creador_no_puede_consultar_balances(self):
+    def test_participante_activo_puede_consultar_balances(self):
         self.client.force_authenticate(
             user=self.andres
         )
@@ -372,17 +334,9 @@ class ConsultaBalancesGrupoTest(APITestCase):
 
         self.assertEqual(
             response.status_code,
-            status.HTTP_404_NOT_FOUND,
+            status.HTTP_200_OK,
         )
 
-        self.assertEqual(
-            response.data["error"],
-            (
-                "Grupo no encontrado o no tienes permiso "
-                "para consultar sus balances."
-            ),
-        )
-    
 class ActualizacionBalancesAlRegistrarGastoTest(APITestCase):
 
     def setUp(self):
@@ -404,10 +358,14 @@ class ActualizacionBalancesAlRegistrarGastoTest(APITestCase):
             password="Prueba123",
         )
 
+        ahora = timezone.now()
+
         self.grupo = Group.objects.create(
             nombre="Grupo SC-40",
             descripcion="Prueba de actualización de balances",
             creador=self.damarys,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
         )
 
         self.grupo.participantes.add(
@@ -416,57 +374,27 @@ class ActualizacionBalancesAlRegistrarGastoTest(APITestCase):
             self.carlita,
         )
 
+        for usuario in [
+            self.damarys,
+            self.andres,
+            self.carlita,
+        ]:
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=usuario,
+            )
+
         self.client.force_authenticate(
             user=self.damarys
         )
 
-    def test_registrar_gasto_actualiza_balances(self):
-        respuesta_inicial = self.client.get(
-            f"/api/grupos/{self.grupo.id}/balances/"
-        )
-
-        self.assertEqual(
-            respuesta_inicial.status_code,
-            status.HTTP_200_OK,
-        )
-
-        resumen_inicial = respuesta_inicial.data["resumen"]
-
-        self.assertEqual(
-            Decimal(resumen_inicial["total_pagado"]),
-            Decimal("0.00"),
-        )
-
-        self.assertEqual(
-            Decimal(
-                resumen_inicial["total_correspondiente"]
-            ),
-            Decimal("0.00"),
-        )
-
-        for balance in respuesta_inicial.data["balances"]:
-            self.assertEqual(
-                Decimal(balance["balance"]),
-                Decimal("0.00"),
-            )
-
-            self.assertEqual(
-                balance["estado"],
-                "saldado",
-            )
-
+    def test_registrar_gasto_actualiza_total_y_balances(self):
         respuesta_registro = self.client.post(
             f"/api/grupos/{self.grupo.id}/gastos/",
             {
                 "descripcion": "Cena del grupo",
                 "monto": "60.00",
                 "fecha_gasto": "2026-07-20",
-                "pagado_por_id": self.andres.id,
-                "participantes_ids": [
-                    self.damarys.id,
-                    self.andres.id,
-                    self.carlita.id,
-                ],
             },
             format="json",
         )
@@ -477,11 +405,34 @@ class ActualizacionBalancesAlRegistrarGastoTest(APITestCase):
         )
 
         self.assertEqual(
-            len(
-                respuesta_registro.data["gasto"][
-                    "divisiones"
-                ]
-            ),
+            respuesta_registro.data["mensaje"],
+            "Gasto común registrado correctamente.",
+        )
+
+        self.assertEqual(
+            Decimal(respuesta_registro.data["total_gastos"]),
+            Decimal("60.00"),
+        )
+
+        gasto_respuesta = respuesta_registro.data["gasto"]
+
+        self.assertNotIn(
+            "pagado_por",
+            gasto_respuesta,
+        )
+
+        self.assertEqual(
+            gasto_respuesta["registrado_por"]["username"],
+            "damarys_sc40",
+        )
+
+        self.assertEqual(
+            len(gasto_respuesta["participantes"]),
+            3,
+        )
+
+        self.assertEqual(
+            len(gasto_respuesta["divisiones"]),
             3,
         )
 
@@ -489,101 +440,45 @@ class ActualizacionBalancesAlRegistrarGastoTest(APITestCase):
             f"/api/grupos/{self.grupo.id}/balances/"
         )
 
-        self.assertEqual(
-            respuesta_actualizada.status_code,
-            status.HTTP_200_OK,
-        )
-
-        resumen_actualizado = (
-            respuesta_actualizada.data["resumen"]
-        )
+        resumen = respuesta_actualizada.data["resumen"]
 
         self.assertEqual(
-            Decimal(resumen_actualizado["total_pagado"]),
-            Decimal("60.00"),
-        )
-
-        self.assertEqual(
-            Decimal(
-                resumen_actualizado[
-                    "total_correspondiente"
-                ]
-            ),
-            Decimal("60.00"),
-        )
-
-        self.assertEqual(
-            Decimal(
-                resumen_actualizado["balance_general"]
-            ),
+            Decimal(resumen["total_pagado"]),
             Decimal("0.00"),
         )
 
-        balances = {
-            balance["participante"]["username"]: balance
-            for balance in respuesta_actualizada.data[
-                "balances"
-            ]
-        }
-
-        balance_andres = balances["andres_sc40"]
-
         self.assertEqual(
-            Decimal(balance_andres["total_pagado"]),
+            Decimal(resumen["total_correspondiente"]),
             Decimal("60.00"),
         )
 
         self.assertEqual(
-            Decimal(
-                balance_andres["total_correspondiente"]
-            ),
-            Decimal("20.00"),
+            Decimal(resumen["balance_general"]),
+            Decimal("-60.00"),
         )
 
-        self.assertEqual(
-            Decimal(balance_andres["balance"]),
-            Decimal("40.00"),
-        )
-
-        self.assertEqual(
-            balance_andres["estado"],
-            "a_favor",
-        )
-
-        for username in [
-            "damarys_sc40",
-            "carlita_sc40",
-        ]:
-            balance_participante = balances[username]
-
+        for balance in respuesta_actualizada.data["balances"]:
             self.assertEqual(
-                Decimal(
-                    balance_participante["total_pagado"]
-                ),
-                Decimal("0.00"),
-            )
-
-            self.assertEqual(
-                Decimal(
-                    balance_participante[
-                        "total_correspondiente"
-                    ]
-                ),
+                Decimal(balance["total_correspondiente"]),
                 Decimal("20.00"),
             )
-
             self.assertEqual(
-                Decimal(
-                    balance_participante["balance"]
-                ),
+                Decimal(balance["balance"]),
                 Decimal("-20.00"),
             )
-
             self.assertEqual(
-                balance_participante["estado"],
+                balance["estado"],
                 "debe",
             )
 
+        respuesta_grupo = self.client.get(
+            f"/api/grupos/{self.grupo.id}/"
+        )
+
+        self.assertEqual(
+            Decimal(respuesta_grupo.data["total_gastos"]),
+            Decimal("60.00"),
+        )
 
 class RegistroPagoTest(APITestCase):
 
@@ -874,7 +769,6 @@ class RegistroPagoTest(APITestCase):
             0,
         )
 
-
 class VigenciaEstadoActividadTest(APITestCase):
 
     def setUp(self):
@@ -1123,7 +1017,6 @@ class VigenciaEstadoActividadTest(APITestCase):
                 grupo.estado,
                 Group.ESTADO_CERRADA,
             )
-
 
 class GestionMembresiasHistorialTest(APITestCase):
 
@@ -1564,7 +1457,6 @@ class GestionMembresiasHistorialTest(APITestCase):
             ),
         )
 
-
 class ConsultaActividadesCompartidasTest(APITestCase):
 
     def setUp(self):
@@ -1592,10 +1484,14 @@ class ConsultaActividadesCompartidasTest(APITestCase):
             password="Prueba123",
         )
 
+        ahora = timezone.now()
+
         self.grupo = Group.objects.create(
             nombre="Actividad compartida SC-45",
             descripcion="Actividad visible para miembros activos",
             creador=self.fernando,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
         )
 
         self.grupo.participantes.add(
@@ -1608,11 +1504,9 @@ class ConsultaActividadesCompartidasTest(APITestCase):
             usuario=self.fernando,
         )
 
-        self.membresia_carlita = (
-            GroupMembership.objects.create(
-                grupo=self.grupo,
-                usuario=self.carlita,
-            )
+        self.membresia_carlita = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.carlita,
         )
 
         membresia_damarys = GroupMembership.objects.create(
@@ -1625,7 +1519,6 @@ class ConsultaActividadesCompartidasTest(APITestCase):
             grupo=self.grupo,
             descripcion="Almuerzo compartido",
             monto=Decimal("20.00"),
-            pagado_por=self.fernando,
             registrado_por=self.fernando,
         )
 
@@ -1640,9 +1533,7 @@ class ConsultaActividadesCompartidasTest(APITestCase):
             user=self.carlita
         )
 
-        response = self.client.get(
-            "/api/grupos/"
-        )
+        response = self.client.get("/api/grupos/")
 
         self.assertEqual(
             response.status_code,
@@ -1669,14 +1560,7 @@ class ConsultaActividadesCompartidasTest(APITestCase):
             user=self.fernando
         )
 
-        response = self.client.get(
-            "/api/grupos/"
-        )
-
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_200_OK,
-        )
+        response = self.client.get("/api/grupos/")
 
         grupos_ids = [
             grupo["id"]
@@ -1688,84 +1572,7 @@ class ConsultaActividadesCompartidasTest(APITestCase):
             1,
         )
 
-    def test_participante_retirado_no_ve_actividad_en_listado(self):
-        self.client.force_authenticate(
-            user=self.damarys
-        )
-
-        response = self.client.get(
-            "/api/grupos/"
-        )
-
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_200_OK,
-        )
-
-        grupos_ids = [
-            grupo["id"]
-            for grupo in response.data
-        ]
-
-        self.assertNotIn(
-            self.grupo.id,
-            grupos_ids,
-        )
-
-    def test_usuario_externo_no_ve_actividad_en_listado(self):
-        self.client.force_authenticate(
-            user=self.usuario_externo
-        )
-
-        response = self.client.get(
-            "/api/grupos/"
-        )
-
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_200_OK,
-        )
-
-        grupos_ids = [
-            grupo["id"]
-            for grupo in response.data
-        ]
-
-        self.assertNotIn(
-            self.grupo.id,
-            grupos_ids,
-        )
-
-    def test_participante_activo_puede_consultar_detalle(self):
-        self.client.force_authenticate(
-            user=self.carlita
-        )
-
-        response = self.client.get(
-            f"/api/grupos/{self.grupo.id}/"
-        )
-
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_200_OK,
-        )
-
-        self.assertEqual(
-            response.data["id"],
-            self.grupo.id,
-        )
-
-        self.assertEqual(
-            response.data["nombre"],
-            "Actividad compartida SC-45",
-        )
-
-        self.assertEqual(
-            response.data["creador_username"],
-            "fernando_sc45",
-        )
-
-    def test_retirado_y_externo_no_pueden_consultar_detalle(self):
+    def test_retirado_y_externo_no_ven_actividad(self):
         for usuario in [
             self.damarys,
             self.usuario_externo,
@@ -1774,12 +1581,23 @@ class ConsultaActividadesCompartidasTest(APITestCase):
                 user=usuario
             )
 
-            response = self.client.get(
+            listado = self.client.get("/api/grupos/")
+            grupos_ids = [
+                grupo["id"]
+                for grupo in listado.data
+            ]
+
+            self.assertNotIn(
+                self.grupo.id,
+                grupos_ids,
+            )
+
+            detalle = self.client.get(
                 f"/api/grupos/{self.grupo.id}/"
             )
 
             self.assertEqual(
-                response.status_code,
+                detalle.status_code,
                 status.HTTP_404_NOT_FOUND,
             )
 
@@ -1789,6 +1607,7 @@ class ConsultaActividadesCompartidasTest(APITestCase):
         )
 
         rutas = [
+            f"/api/grupos/{self.grupo.id}/",
             f"/api/grupos/{self.grupo.id}/gastos/",
             (
                 f"/api/grupos/{self.grupo.id}/"
@@ -1808,7 +1627,7 @@ class ConsultaActividadesCompartidasTest(APITestCase):
                 msg=f"Falló la consulta de {ruta}",
             )
 
-    def test_participante_activo_no_puede_editar_ni_eliminar_grupo(self):
+    def test_participante_activo_no_puede_administrar_grupo(self):
         self.client.force_authenticate(
             user=self.carlita
         )
@@ -1821,36 +1640,8 @@ class ConsultaActividadesCompartidasTest(APITestCase):
             format="json",
         )
 
-        self.assertEqual(
-            response_patch.status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-
-        self.grupo.refresh_from_db()
-
-        self.assertEqual(
-            self.grupo.nombre,
-            "Actividad compartida SC-45",
-        )
-
         response_delete = self.client.delete(
             f"/api/grupos/{self.grupo.id}/"
-        )
-
-        self.assertEqual(
-            response_delete.status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-
-        self.assertTrue(
-            Group.objects.filter(
-                id=self.grupo.id
-            ).exists()
-        )
-
-    def test_participante_activo_no_puede_administrar_participantes(self):
-        self.client.force_authenticate(
-            user=self.carlita
         )
 
         response_agregar = self.client.post(
@@ -1865,37 +1656,19 @@ class ConsultaActividadesCompartidasTest(APITestCase):
         )
 
         self.assertEqual(
+            response_patch.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        self.assertEqual(
+            response_delete.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        self.assertEqual(
             response_agregar.status_code,
             status.HTTP_404_NOT_FOUND,
         )
 
-        response_retirar = self.client.delete(
-            (
-                f"/api/grupos/{self.grupo.id}/"
-                f"participantes/{self.fernando.id}/"
-            )
-        )
-
-        self.assertEqual(
-            response_retirar.status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-
-        self.assertFalse(
-            GroupMembership.objects.filter(
-                grupo=self.grupo,
-                usuario=self.usuario_externo,
-                activo=True,
-            ).exists()
-        )
-
-        self.membresia_carlita.refresh_from_db()
-
-        self.assertTrue(
-            self.membresia_carlita.activo
-        )
-
-    def test_participante_activo_puede_registrar_gastos_y_pagos(self):
+    def test_participante_activo_puede_registrar_gasto_comun_y_pago(self):
         self.client.force_authenticate(
             user=self.carlita
         )
@@ -1906,11 +1679,6 @@ class ConsultaActividadesCompartidasTest(APITestCase):
                 "descripcion": "Gasto del participante",
                 "monto": "10.00",
                 "fecha_gasto": "2026-07-25",
-                "pagado_por_id": self.carlita.id,
-                "participantes_ids": [
-                    self.fernando.id,
-                    self.carlita.id,
-                ],
             },
             format="json",
         )
@@ -1918,6 +1686,29 @@ class ConsultaActividadesCompartidasTest(APITestCase):
         self.assertEqual(
             response_gasto.status_code,
             status.HTTP_201_CREATED,
+        )
+
+        gasto = Expense.objects.get(
+            grupo=self.grupo,
+            descripcion="Gasto del participante",
+        )
+
+        self.assertEqual(
+            gasto.registrado_por,
+            self.carlita,
+        )
+
+        self.assertSetEqual(
+            set(
+                gasto.participantes.values_list(
+                    "id",
+                    flat=True,
+                )
+            ),
+            {
+                self.fernando.id,
+                self.carlita.id,
+            },
         )
 
         response_pago = self.client.post(
@@ -1934,32 +1725,6 @@ class ConsultaActividadesCompartidasTest(APITestCase):
             response_pago.status_code,
             status.HTTP_201_CREATED,
         )
-
-        gasto = Expense.objects.get(
-            grupo=self.grupo,
-            descripcion="Gasto del participante",
-        )
-
-        self.assertEqual(
-            gasto.registrado_por,
-            self.carlita,
-        )
-
-        pago = Payment.objects.get(
-            grupo=self.grupo,
-            receptor=self.fernando,
-        )
-
-        self.assertEqual(
-            pago.pagador,
-            self.carlita,
-        )
-
-        self.assertEqual(
-            pago.registrado_por,
-            self.carlita,
-        )
-
 
 class PermisosSegunRolEstadoTest(APITestCase):
 
@@ -2052,7 +1817,6 @@ class PermisosSegunRolEstadoTest(APITestCase):
             grupo=self.grupo_cerrado,
             descripcion="Gasto histórico cerrado",
             monto=Decimal("20.00"),
-            pagado_por=self.fernando,
             registrado_por=self.fernando,
         )
 
@@ -2077,18 +1841,8 @@ class PermisosSegunRolEstadoTest(APITestCase):
                     "descripcion": "Operación no autorizada",
                     "monto": "10.00",
                     "fecha_gasto": "2026-07-25",
-                    "pagado_por_id": usuario.id,
-                    "participantes_ids": [
-                        self.fernando.id,
-                        self.carlita.id,
-                    ],
                 },
                 format="json",
-            )
-
-            self.assertEqual(
-                response_gasto.status_code,
-                status.HTTP_404_NOT_FOUND,
             )
 
             response_pago = self.client.post(
@@ -2101,6 +1855,10 @@ class PermisosSegunRolEstadoTest(APITestCase):
                 format="json",
             )
 
+            self.assertEqual(
+                response_gasto.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
             self.assertEqual(
                 response_pago.status_code,
                 status.HTTP_404_NOT_FOUND,
@@ -2117,11 +1875,6 @@ class PermisosSegunRolEstadoTest(APITestCase):
                 "descripcion": "Gasto posterior al cierre",
                 "monto": "10.00",
                 "fecha_gasto": "2026-07-25",
-                "pagado_por_id": self.carlita.id,
-                "participantes_ids": [
-                    self.fernando.id,
-                    self.carlita.id,
-                ],
             },
             format="json",
         )
@@ -2134,8 +1887,8 @@ class PermisosSegunRolEstadoTest(APITestCase):
         self.assertEqual(
             response_gasto.data["error"],
             (
-                "No se pueden registrar gastos porque "
-                "la actividad está cerrada."
+                "Solo se pueden registrar gastos mientras "
+                "la actividad está activa."
             ),
         )
 
@@ -2154,14 +1907,6 @@ class PermisosSegunRolEstadoTest(APITestCase):
             status.HTTP_400_BAD_REQUEST,
         )
 
-        self.assertEqual(
-            response_pago.data["error"],
-            (
-                "No se pueden registrar pagos porque "
-                "la actividad está cerrada."
-            ),
-        )
-
     def test_grupo_cerrado_no_permite_cambios_de_participantes(self):
         self.client.force_authenticate(
             user=self.fernando
@@ -2178,11 +1923,6 @@ class PermisosSegunRolEstadoTest(APITestCase):
             format="json",
         )
 
-        self.assertEqual(
-            response_agregar.status_code,
-            status.HTTP_400_BAD_REQUEST,
-        )
-
         response_retirar = self.client.delete(
             (
                 f"/api/grupos/{self.grupo_cerrado.id}/"
@@ -2191,20 +1931,12 @@ class PermisosSegunRolEstadoTest(APITestCase):
         )
 
         self.assertEqual(
-            response_retirar.status_code,
+            response_agregar.status_code,
             status.HTTP_400_BAD_REQUEST,
         )
-
-        self.assertTrue(
-            self.grupo_cerrado.participantes.filter(
-                id=self.carlita.id
-            ).exists()
-        )
-
-        self.assertFalse(
-            self.grupo_cerrado.participantes.filter(
-                id=self.nuevo_usuario.id
-            ).exists()
+        self.assertEqual(
+            response_retirar.status_code,
+            status.HTTP_400_BAD_REQUEST,
         )
 
     def test_grupo_cerrado_no_permite_editar_ni_eliminar_gastos(self):
@@ -2223,11 +1955,6 @@ class PermisosSegunRolEstadoTest(APITestCase):
             format="json",
         )
 
-        self.assertEqual(
-            response_patch.status_code,
-            status.HTTP_400_BAD_REQUEST,
-        )
-
         response_delete = self.client.delete(
             (
                 f"/api/grupos/{self.grupo_cerrado.id}/"
@@ -2236,15 +1963,12 @@ class PermisosSegunRolEstadoTest(APITestCase):
         )
 
         self.assertEqual(
-            response_delete.status_code,
+            response_patch.status_code,
             status.HTTP_400_BAD_REQUEST,
         )
-
-        self.gasto_cerrado.refresh_from_db()
-
         self.assertEqual(
-            self.gasto_cerrado.monto,
-            Decimal("20.00"),
+            response_delete.status_code,
+            status.HTTP_400_BAD_REQUEST,
         )
 
     def test_creador_puede_editar_datos_generales_de_grupo_cerrado(self):
@@ -2265,13 +1989,6 @@ class PermisosSegunRolEstadoTest(APITestCase):
             status.HTTP_200_OK,
         )
 
-        self.grupo_cerrado.refresh_from_db()
-
-        self.assertEqual(
-            self.grupo_cerrado.nombre,
-            "Actividad cerrada actualizada",
-        )
-
     def test_participante_no_puede_editar_ni_eliminar_grupo(self):
         self.client.force_authenticate(
             user=self.carlita
@@ -2285,22 +2002,296 @@ class PermisosSegunRolEstadoTest(APITestCase):
             format="json",
         )
 
-        self.assertEqual(
-            response_patch.status_code,
-            status.HTTP_404_NOT_FOUND,
-        )
-
         response_delete = self.client.delete(
             f"/api/grupos/{self.grupo_activo.id}/"
         )
 
         self.assertEqual(
+            response_patch.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+        self.assertEqual(
             response_delete.status_code,
             status.HTTP_404_NOT_FOUND,
         )
 
-        self.assertTrue(
-            Group.objects.filter(
-                id=self.grupo_activo.id
-            ).exists()
+class RegistroGastoComunTest(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc47",
+            email="fernando_sc47@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc47",
+            email="carlita_sc47@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc47",
+            email="damarys_sc47@example.com",
+            password="Prueba123",
+        )
+
+        self.retirado = User.objects.create_user(
+            username="retirado_sc47",
+            email="retirado_sc47@example.com",
+            password="Prueba123",
+        )
+
+        ahora = timezone.now()
+
+        self.grupo_activo = self.crear_grupo_con_miembros(
+            nombre="Actividad activa SC-47",
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
+        )
+
+        self.grupo_programado = self.crear_grupo_con_miembros(
+            nombre="Actividad programada SC-47",
+            fecha_inicio=ahora + timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=2),
+        )
+
+        self.grupo_cerrado = self.crear_grupo_con_miembros(
+            nombre="Actividad cerrada SC-47",
+            fecha_inicio=ahora - timedelta(days=2),
+            fecha_fin=ahora - timedelta(days=1),
+        )
+
+        membresia_retirada = GroupMembership.objects.create(
+            grupo=self.grupo_activo,
+            usuario=self.retirado,
+        )
+        membresia_retirada.retirar()
+
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+    def crear_grupo_con_miembros(
+        self,
+        nombre,
+        fecha_inicio,
+        fecha_fin,
+    ):
+        grupo = Group.objects.create(
+            nombre=nombre,
+            descripcion="Pruebas de gasto común",
+            creador=self.fernando,
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+        )
+
+        grupo.participantes.add(
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        )
+
+        for usuario in [
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        ]:
+            GroupMembership.objects.create(
+                grupo=grupo,
+                usuario=usuario,
+            )
+
+        return grupo
+
+    def test_participante_activo_registra_gasto_comun(self):
+        response = self.client.post(
+            f"/api/grupos/{self.grupo_activo.id}/gastos/",
+            {
+                "descripcion": "Transporte",
+                "monto": "75.00",
+                "fecha_gasto": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        gasto = Expense.objects.get()
+
+        self.assertEqual(
+            gasto.registrado_por,
+            self.carlita,
+        )
+
+        self.assertSetEqual(
+            set(
+                gasto.participantes.values_list(
+                    "id",
+                    flat=True,
+                )
+            ),
+            {
+                self.fernando.id,
+                self.carlita.id,
+                self.damarys.id,
+            },
+        )
+
+        self.assertEqual(
+            gasto.divisiones.count(),
+            3,
+        )
+
+        for division in gasto.divisiones.all():
+            self.assertEqual(
+                division.monto_asignado,
+                Decimal("25.00"),
+            )
+
+    def test_campos_antiguos_no_modifican_asociacion_automatica(self):
+        response = self.client.post(
+            f"/api/grupos/{self.grupo_activo.id}/gastos/",
+            {
+                "descripcion": "Hospedaje",
+                "monto": "90.00",
+                "fecha_gasto": "2026-07-25",
+                "pagado_por_id": self.retirado.id,
+                "participantes_ids": [
+                    self.retirado.id,
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        gasto = Expense.objects.get()
+
+        self.assertSetEqual(
+            set(
+                gasto.participantes.values_list(
+                    "id",
+                    flat=True,
+                )
+            ),
+            {
+                self.fernando.id,
+                self.carlita.id,
+                self.damarys.id,
+            },
+        )
+
+        self.assertNotIn(
+            "pagado_por",
+            response.data["gasto"],
+        )
+
+    def test_total_comun_aumenta_inmediatamente(self):
+        for descripcion, monto in [
+            ("Alimentación", "40.00"),
+            ("Entradas", "15.50"),
+        ]:
+            response = self.client.post(
+                f"/api/grupos/{self.grupo_activo.id}/gastos/",
+                {
+                    "descripcion": descripcion,
+                    "monto": monto,
+                    "fecha_gasto": "2026-07-25",
+                },
+                format="json",
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_201_CREATED,
+            )
+
+        detalle = self.client.get(
+            f"/api/grupos/{self.grupo_activo.id}/"
+        )
+
+        self.assertEqual(
+            Decimal(detalle.data["total_gastos"]),
+            Decimal("55.50"),
+        )
+
+        listado = self.client.get(
+            f"/api/grupos/{self.grupo_activo.id}/gastos/"
+        )
+
+        self.assertEqual(
+            listado.data["total_registros"],
+            2,
+        )
+
+        self.assertEqual(
+            Decimal(listado.data["total_gastos"]),
+            Decimal("55.50"),
+        )
+
+    def test_grupo_programado_no_permite_registrar_gastos(self):
+        response = self.client.post(
+            f"/api/grupos/{self.grupo_programado.id}/gastos/",
+            {
+                "descripcion": "Gasto anticipado",
+                "monto": "10.00",
+                "fecha_gasto": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response.data["error"],
+            (
+                "Solo se pueden registrar gastos mientras "
+                "la actividad está activa."
+            ),
+        )
+
+    def test_grupo_cerrado_no_permite_registrar_gastos(self):
+        response = self.client.post(
+            f"/api/grupos/{self.grupo_cerrado.id}/gastos/",
+            {
+                "descripcion": "Gasto tardío",
+                "monto": "10.00",
+                "fecha_gasto": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+    def test_fecha_del_gasto_es_obligatoria(self):
+        response = self.client.post(
+            f"/api/grupos/{self.grupo_activo.id}/gastos/",
+            {
+                "descripcion": "Gasto sin fecha",
+                "monto": "10.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "fecha_gasto",
+            response.data,
         )

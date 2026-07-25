@@ -134,13 +134,10 @@ function GroupDetail() {
   const [usuarios, setUsuarios] = useState([]);
   const [usuarioSeleccionado, setUsuarioSeleccionado] = useState("");
 
-  const [participantesGasto, setParticipantesGasto] = useState([]);
-
   const [gastoData, setGastoData] = useState({
     descripcion: "",
     monto: "",
     fecha_gasto: obtenerFechaActual(),
-    pagado_por_id: "",
   });
 
   const [registrandoGasto, setRegistrandoGasto] = useState(false);
@@ -155,6 +152,7 @@ function GroupDetail() {
   const [errorPago, setErrorPago] = useState("");
 
   const [gastos, setGastos] = useState([]);
+  const [totalGastos, setTotalGastos] = useState("0.00");
   const [cargandoGastos, setCargandoGastos] = useState(true);
   const [errorGastos, setErrorGastos] = useState("");
 
@@ -174,9 +172,7 @@ function GroupDetail() {
     descripcion: "",
     monto: "",
     fecha_gasto: obtenerFechaActual(),
-    pagado_por_id: "",
   });
-  const [participantesEdicion, setParticipantesEdicion] = useState([]);
   const [guardandoEdicionGasto, setGuardandoEdicionGasto] = useState(false);
   const [errorEdicionGasto, setErrorEdicionGasto] = useState("");
   const [eliminandoGastoId, setEliminandoGastoId] = useState(null);
@@ -214,9 +210,13 @@ function GroupDetail() {
     username.charAt(0).toUpperCase() + username.slice(1);
   const avatarLetter = username.charAt(0).toUpperCase();
   const esCreador = grupo?.creador_username === username;
+  const actividadProgramada = grupo?.estado === "programada";
+  const actividadActiva = grupo?.estado === "activa";
   const actividadCerrada = grupo?.estado === "cerrada";
   const puedeRegistrarOperaciones =
     Boolean(grupo) && !actividadCerrada;
+  const puedeRegistrarGastos =
+    Boolean(grupo) && actividadActiva;
   const usuarioActual = grupo?.participantes?.find(
     (participante) => participante.username === username
   );
@@ -374,6 +374,7 @@ function GroupDetail() {
         const data = await response.json();
 
         setGrupo(data);
+        setTotalGastos(data.total_gastos || "0.00");
 
         setFormData({
           nombre: data.nombre || "",
@@ -472,6 +473,7 @@ function GroupDetail() {
         }
 
         setGastos(Array.isArray(data.gastos) ? data.gastos : []);
+        setTotalGastos(data.total_gastos || "0.00");
       } catch (errorListado) {
         setErrorGastos(
           errorListado.message ||
@@ -603,15 +605,7 @@ function GroupDetail() {
       descripcion: gasto.descripcion || "",
       monto: gasto.monto || "",
       fecha_gasto: gasto.fecha_gasto || obtenerFechaActual(),
-      pagado_por_id: gasto.pagado_por?.id
-        ? String(gasto.pagado_por.id)
-        : "",
     });
-    setParticipantesEdicion(
-      Array.isArray(gasto.participantes)
-        ? gasto.participantes.map((participante) => participante.id)
-        : []
-    );
     setErrorEdicionGasto("");
     setMensaje("");
     setError("");
@@ -629,9 +623,7 @@ function GroupDetail() {
       descripcion: "",
       monto: "",
       fecha_gasto: obtenerFechaActual(),
-      pagado_por_id: "",
     });
-    setParticipantesEdicion([]);
     setErrorEdicionGasto("");
   };
 
@@ -641,19 +633,6 @@ function GroupDetail() {
       [e.target.name]: e.target.value,
     });
   };
-
-  const alternarParticipanteEdicion = (participanteId) => {
-    setParticipantesEdicion((seleccionados) => {
-      if (seleccionados.includes(participanteId)) {
-        return seleccionados.filter(
-          (item) => item !== participanteId
-        );
-      }
-
-      return [...seleccionados, participanteId];
-    });
-  };
-
   const guardarEdicionGasto = async (e) => {
     e.preventDefault();
     setErrorEdicionGasto("");
@@ -682,20 +661,6 @@ function GroupDetail() {
       return;
     }
 
-    if (!edicionGastoData.pagado_por_id) {
-      setErrorEdicionGasto(
-        "Selecciona quién pagó el gasto."
-      );
-      return;
-    }
-
-    if (participantesEdicion.length === 0) {
-      setErrorEdicionGasto(
-        "Selecciona al menos un participante para el gasto."
-      );
-      return;
-    }
-
     const token = localStorage.getItem("access");
 
     if (!token) {
@@ -720,10 +685,6 @@ function GroupDetail() {
             descripcion: edicionGastoData.descripcion.trim(),
             monto: edicionGastoData.monto,
             fecha_gasto: edicionGastoData.fecha_gasto,
-            pagado_por_id: Number(
-              edicionGastoData.pagado_por_id
-            ),
-            participantes_ids: participantesEdicion,
           }),
         }
       );
@@ -746,12 +707,21 @@ function GroupDetail() {
       }
 
       if (data.gasto) {
-        setGastos((gastosActuales) =>
-          gastosActuales.map((gasto) =>
-            gasto.id === data.gasto.id
-              ? data.gasto
-              : gasto
-          )
+        const gastosActualizados = gastos.map((gasto) =>
+          gasto.id === data.gasto.id
+            ? data.gasto
+            : gasto
+        );
+
+        setGastos(gastosActualizados);
+        setTotalGastos(
+          gastosActualizados
+            .reduce(
+              (total, gasto) =>
+                total + Number(gasto.monto || 0),
+              0
+            )
+            .toFixed(2)
         );
 
         setGastoSeleccionado((detalleActual) =>
@@ -763,7 +733,6 @@ function GroupDetail() {
 
       setEdicionGastoAbierta(false);
       setGastoEditandoId(null);
-      setParticipantesEdicion([]);
       setErrorEdicionGasto("");
       setMensaje(
         data.mensaje || "Gasto actualizado correctamente."
@@ -832,10 +801,19 @@ function GroupDetail() {
         );
       }
 
-      setGastos((gastosActuales) =>
-        gastosActuales.filter(
-          (gastoActual) => gastoActual.id !== gasto.id
-        )
+      const gastosActualizados = gastos.filter(
+        (gastoActual) => gastoActual.id !== gasto.id
+      );
+
+      setGastos(gastosActualizados);
+      setTotalGastos(
+        gastosActualizados
+          .reduce(
+            (total, gastoActual) =>
+              total + Number(gastoActual.monto || 0),
+            0
+          )
+          .toFixed(2)
       );
 
       if (gastoSeleccionado?.id === gasto.id) {
@@ -845,7 +823,6 @@ function GroupDetail() {
       if (gastoEditandoId === gasto.id) {
         setEdicionGastoAbierta(false);
         setGastoEditandoId(null);
-        setParticipantesEdicion([]);
         setErrorEdicionGasto("");
       }
 
@@ -1129,6 +1106,7 @@ function GroupDetail() {
       }
 
       setGrupo(data);
+      setTotalGastos(data.total_gastos || totalGastos);
 
       setFormData({
         nombre: data.nombre || "",
@@ -1209,19 +1187,6 @@ function GroupDetail() {
       setError("No se pudo eliminar el grupo. Intenta nuevamente.");
     }
   };
-
-  const alternarParticipanteGasto = (participanteId) => {
-    setParticipantesGasto((seleccionados) => {
-      if (seleccionados.includes(participanteId)) {
-        return seleccionados.filter(
-          (item) => item !== participanteId
-        );
-      }
-
-      return [...seleccionados, participanteId];
-    });
-  };
-
   const registrarGasto = async (e) => {
     e.preventDefault();
 
@@ -1240,18 +1205,6 @@ function GroupDetail() {
 
     if (!gastoData.fecha_gasto) {
       setError("Selecciona la fecha del gasto.");
-      return;
-    }
-
-    if (!gastoData.pagado_por_id) {
-      setError("Selecciona quién pagó el gasto.");
-      return;
-    }
-
-    if (participantesGasto.length === 0) {
-      setError(
-        "Selecciona al menos un participante para el gasto."
-      );
       return;
     }
 
@@ -1277,8 +1230,6 @@ function GroupDetail() {
             descripcion: gastoData.descripcion.trim(),
             monto: gastoData.monto,
             fecha_gasto: gastoData.fecha_gasto,
-            pagado_por_id: Number(gastoData.pagado_por_id),
-            participantes_ids: participantesGasto,
           }),
         }
       );
@@ -1304,10 +1255,7 @@ function GroupDetail() {
         descripcion: "",
         monto: "",
         fecha_gasto: obtenerFechaActual(),
-        pagado_por_id: "",
       });
-
-      setParticipantesGasto([]);
 
       if (data.gasto) {
         setGastos((gastosActuales) => [
@@ -1316,9 +1264,17 @@ function GroupDetail() {
         ]);
       }
 
+      setTotalGastos(
+        data.total_gastos ||
+          (
+            Number(totalGastos) +
+            Number(data.gasto?.monto || 0)
+          ).toFixed(2)
+      );
+
       setErrorGastos("");
       setMensaje(
-        data.mensaje || "Gasto registrado correctamente."
+        data.mensaje || "Gasto común registrado correctamente."
       );
 
       await obtenerBalances();
@@ -1403,6 +1359,9 @@ function GroupDetail() {
       }
 
       setGrupo(data.grupo);
+      setTotalGastos(
+        data.grupo?.total_gastos || totalGastos
+      );
       setUsuarioSeleccionado("");
       setMensaje(
         data.mensaje || "Participante agregado correctamente."
@@ -1459,25 +1418,9 @@ function GroupDetail() {
       }
 
       setGrupo(data.grupo);
-
-      setParticipantesGasto((seleccionados) =>
-        seleccionados.filter(
-          (item) => item !== participanteId
-        )
+      setTotalGastos(
+        data.grupo?.total_gastos || totalGastos
       );
-
-      setGastoData((datosActuales) => {
-        if (
-          Number(datosActuales.pagado_por_id) === participanteId
-        ) {
-          return {
-            ...datosActuales,
-            pagado_por_id: "",
-          };
-        }
-
-        return datosActuales;
-      });
 
       setPagoData((datosActuales) => ({
         ...datosActuales,
@@ -1654,7 +1597,9 @@ function GroupDetail() {
                   ? "Revisa y administra la información general de la actividad."
                   : actividadCerrada
                     ? "Consulta la información histórica de esta actividad."
-                    : "Consulta la actividad y registra gastos o pagos propios."}
+                    : actividadProgramada
+                      ? "Consulta la actividad; los gastos se habilitarán cuando inicie."
+                      : "Consulta la actividad y registra gastos comunes o pagos propios."}
               </p>
             </header>
 
@@ -1719,6 +1664,17 @@ function GroupDetail() {
                   </div>
                 )}
 
+                {actividadProgramada && (
+                  <div
+                    className="alert alert-info"
+                    role="alert"
+                  >
+                    Esta actividad todavía no ha comenzado.
+                    El registro de gastos comunes se habilitará
+                    automáticamente cuando llegue la fecha de inicio.
+                  </div>
+                )}
+
                 {!esCreador && !actividadCerrada && (
                   <div
                     className="alert alert-info"
@@ -1726,8 +1682,8 @@ function GroupDetail() {
                   >
                     Participas activamente en esta actividad.
                     Puedes consultar la información, registrar
-                    gastos y registrar únicamente tus propios
-                    pagos.
+                    gastos comunes cuando esté activa y registrar
+                    únicamente tus propios pagos.
                   </div>
                 )}
 
@@ -2373,12 +2329,12 @@ function GroupDetail() {
                                 <div className="col-md-4">
                                   <div className="border rounded p-3 h-100 bg-light">
                                     <small className="text-muted d-block">
-                                      Total pagado
+                                      Total común
                                     </small>
 
                                     <strong className="fs-5">
                                       {formatearMonto(
-                                        resumenBalances.total_pagado
+                                        totalGastos
                                       )}
                                     </strong>
                                   </div>
@@ -2464,12 +2420,12 @@ function GroupDetail() {
                                         <div className="col-md-6">
                                           <div className="bg-light border rounded p-2">
                                             <small className="text-muted d-block">
-                                              Total pagado
+                                              Pagos realizados
                                             </small>
 
                                             <strong>
                                               {formatearMonto(
-                                                balance.total_pagado
+                                                balance.pagos_realizados
                                               )}
                                             </strong>
                                           </div>
@@ -2666,225 +2622,150 @@ function GroupDetail() {
                         </div>
                       )}
 
-                      {puedeRegistrarOperaciones && (
+                      {!actividadActiva &&
+                        !actividadCerrada && (
+                          <div
+                            className="alert alert-light border mt-5"
+                            role="alert"
+                          >
+                            {actividadProgramada
+                              ? "El registro de gastos comunes estará disponible cuando la actividad comience."
+                              : "Configura correctamente la vigencia de la actividad para habilitar el registro de gastos."}
+                          </div>
+                        )}
+
+                      {puedeRegistrarGastos && (
                         <div className="mt-5 pt-4 border-top">
-                          <div className="d-flex justify-content-between align-items-center">
+                          <div className="d-flex justify-content-between align-items-center gap-3">
                             <div>
                               <h5 className="mb-1">
-                                Registrar gasto
+                                Registrar gasto común
                               </h5>
 
                               <small className="text-muted">
-                                Todos los integrantes activos pueden
-                                registrar gastos de esta actividad.
+                                Ingresa la descripción, el monto y
+                                la fecha del gasto de la actividad.
                               </small>
                             </div>
+
+                            <span className="badge bg-success">
+                              Actividad activa
+                            </span>
                           </div>
 
-                        <form
-                          onSubmit={registrarGasto}
-                          className="mt-3"
-                        >
-                          <div className="row">
-                            <div className="col-md-6 mb-3">
-                              <label className="form-label">
-                                Descripción del gasto
-                              </label>
-
-                              <input
-                                type="text"
-                                name="descripcion"
-                                className="form-control"
-                                placeholder="Ej: Compra de alimentos"
-                                value={gastoData.descripcion}
-                                onChange={handleGastoChange}
-                                maxLength="150"
-                                required
-                              />
-                            </div>
-
-                            <div className="col-md-3 mb-3">
-                              <label className="form-label">
-                                Monto
-                              </label>
-
-                              <input
-                                type="number"
-                                name="monto"
-                                className="form-control"
-                                placeholder="0.00"
-                                min="0.01"
-                                step="0.01"
-                                value={gastoData.monto}
-                                onChange={handleGastoChange}
-                                required
-                              />
-                            </div>
-
-                            <div className="col-md-3 mb-3">
-                              <label className="form-label">
-                                Fecha
-                              </label>
-
-                              <input
-                                type="date"
-                                name="fecha_gasto"
-                                className="form-control"
-                                value={gastoData.fecha_gasto}
-                                onChange={handleGastoChange}
-                                required
-                              />
-                            </div>
+                          <div
+                            className="alert alert-light border mt-3"
+                            role="alert"
+                          >
+                            El sistema guardará automáticamente
+                            quién registra el gasto y lo asociará
+                            a los {grupo.participantes?.length || 0}{" "}
+                            integrantes activos.
                           </div>
 
-                          <div className="mb-4">
-                            <label className="form-label">
-                              ¿Quién pagó?
-                            </label>
+                          <form
+                            onSubmit={registrarGasto}
+                            className="mt-3"
+                          >
+                            <div className="row">
+                              <div className="col-md-6 mb-3">
+                                <label className="form-label">
+                                  Descripción del gasto
+                                </label>
 
-                            <select
-                              name="pagado_por_id"
-                              className="form-control"
-                              value={
-                                gastoData.pagado_por_id
-                              }
-                              onChange={handleGastoChange}
-                              required
-                            >
-                              <option value="">
-                                Selecciona al participante que
-                                pagó
-                              </option>
+                                <input
+                                  type="text"
+                                  name="descripcion"
+                                  className="form-control"
+                                  placeholder="Ej: Alquiler del transporte"
+                                  value={gastoData.descripcion}
+                                  onChange={handleGastoChange}
+                                  maxLength="150"
+                                  disabled={registrandoGasto}
+                                  required
+                                />
+                              </div>
 
-                              {grupo.participantes?.map(
-                                (participante) => (
-                                  <option
-                                    key={participante.id}
-                                    value={participante.id}
-                                  >
-                                    {
-                                      participante.nombre_completo
-                                    }{" "}
-                                    (@{participante.username})
-                                  </option>
-                                )
-                              )}
-                            </select>
-                          </div>
+                              <div className="col-md-3 mb-3">
+                                <label className="form-label">
+                                  Monto
+                                </label>
 
-                          <div className="mb-3">
-                            <div className="d-flex justify-content-between align-items-center">
-                              <label className="form-label mb-0">
-                                Participantes incluidos en el
-                                gasto
-                              </label>
+                                <input
+                                  type="number"
+                                  name="monto"
+                                  className="form-control"
+                                  placeholder="0.00"
+                                  min="0.01"
+                                  step="0.01"
+                                  value={gastoData.monto}
+                                  onChange={handleGastoChange}
+                                  disabled={registrandoGasto}
+                                  required
+                                />
+                              </div>
 
+                              <div className="col-md-3 mb-3">
+                                <label className="form-label">
+                                  Fecha
+                                </label>
+
+                                <input
+                                  type="date"
+                                  name="fecha_gasto"
+                                  className="form-control"
+                                  value={gastoData.fecha_gasto}
+                                  onChange={handleGastoChange}
+                                  disabled={registrandoGasto}
+                                  required
+                                />
+                              </div>
+                            </div>
+
+                            <div className="d-flex justify-content-between align-items-center gap-3 mt-2">
                               <small className="text-muted">
-                                Seleccionados:{" "}
-                                {participantesGasto.length}
+                                No se selecciona quién pagó ni los
+                                participantes incluidos.
                               </small>
+
+                              <button
+                                type="submit"
+                                className="btn btn-primary"
+                                disabled={
+                                  registrandoGasto ||
+                                  !grupo.participantes ||
+                                  grupo.participantes.length === 0
+                                }
+                              >
+                                {registrandoGasto
+                                  ? "Registrando gasto..."
+                                  : "Registrar gasto común"}
+                              </button>
                             </div>
-
-                            {grupo.participantes &&
-                            grupo.participantes.length > 0 ? (
-                              <div className="mt-3">
-                                {grupo.participantes.map(
-                                  (participante) => (
-                                    <label
-                                      key={participante.id}
-                                      className="d-flex justify-content-between align-items-center border rounded p-3 mb-2"
-                                      style={{
-                                        cursor: "pointer",
-                                      }}
-                                    >
-                                      <div className="d-flex align-items-center gap-3">
-                                        <input
-                                          type="checkbox"
-                                          checked={participantesGasto.includes(
-                                            participante.id
-                                          )}
-                                          onChange={() =>
-                                            alternarParticipanteGasto(
-                                              participante.id
-                                            )
-                                          }
-                                        />
-
-                                        <div>
-                                          <strong>
-                                            {
-                                              participante.nombre_completo
-                                            }
-                                          </strong>
-
-                                          <br />
-
-                                          <small className="text-muted">
-                                            @
-                                            {
-                                              participante.username
-                                            }
-                                          </small>
-                                        </div>
-                                      </div>
-
-                                      <span className="badge bg-light text-dark">
-                                        {participantesGasto.includes(
-                                          participante.id
-                                        )
-                                          ? "Incluido"
-                                          : "No incluido"}
-                                      </span>
-                                    </label>
-                                  )
-                                )}
-                              </div>
-                            ) : (
-                              <div className="empty-groups-card mt-3">
-                                <h5>
-                                  No hay participantes
-                                  disponibles
-                                </h5>
-
-                                <p>
-                                  Primero agrega participantes
-                                  al grupo para registrar un
-                                  gasto.
-                                </p>
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="d-flex justify-content-end mt-4">
-                            <button
-                              type="submit"
-                              className="btn btn-primary"
-                              disabled={
-                                registrandoGasto ||
-                                !grupo.participantes ||
-                                grupo.participantes.length === 0
-                              }
-                            >
-                              {registrandoGasto
-                                ? "Registrando gasto..."
-                                : "Registrar gasto"}
-                            </button>
-                          </div>
-                        </form>
+                          </form>
                         </div>
                       )}
 
                       <div className="mt-5 pt-4 border-top">
-                        <div className="d-flex justify-content-between align-items-center">
+                        <div className="d-flex justify-content-between align-items-center gap-3">
                           <div>
                             <h5 className="mb-1">
-                              Gastos del grupo
+                              Gastos comunes del grupo
                             </h5>
 
                             <small className="text-muted">
-                              Total de gastos registrados:{" "}
-                              {gastos.length}
+                              Registros realizados: {gastos.length}
                             </small>
+                          </div>
+
+                          <div className="text-end">
+                            <small className="text-muted d-block">
+                              Total común
+                            </small>
+
+                            <strong className="fs-4">
+                              {formatearMonto(totalGastos)}
+                            </strong>
                           </div>
                         </div>
 
@@ -2985,24 +2866,24 @@ function GroupDetail() {
 
                                 <div className="mt-3">
                                   <small className="text-muted">
-                                    Pagado por
+                                    Registrado por
                                   </small>
 
                                   <div>
                                     <strong>
-                                      {gasto.pagado_por
+                                      {gasto.registrado_por
                                         ?.nombre_completo ||
-                                        gasto.pagado_por
+                                        gasto.registrado_por
                                           ?.username ||
                                         "Sin información"}
                                     </strong>
 
-                                    {gasto.pagado_por?.username && (
+                                    {gasto.registrado_por?.username && (
                                       <span className="text-muted">
                                         {" "}
                                         (@
                                         {
-                                          gasto.pagado_por
+                                          gasto.registrado_por
                                             .username
                                         }
                                         )
@@ -3013,7 +2894,7 @@ function GroupDetail() {
 
                                 <div className="mt-3">
                                   <small className="text-muted">
-                                    Participantes incluidos:{" "}
+                                    Integrantes asociados:{" "}
                                     {gasto.participantes?.length ||
                                       0}
                                   </small>
@@ -3091,7 +2972,9 @@ function GroupDetail() {
                       <small>
                         {actividadCerrada
                           ? "ⓘ La actividad está cerrada y permanece disponible únicamente para consulta."
-                          : "ⓘ Los integrantes activos pueden registrar gastos y cada usuario solo puede registrar sus propios pagos."}
+                          : actividadProgramada
+                            ? "ⓘ Los gastos comunes se habilitarán al iniciar la actividad; los participantes se asociarán automáticamente."
+                            : "ⓘ Cada gasto común se asocia automáticamente a los integrantes activos y aumenta el total del grupo."}
                       </small>
 
                       <button
@@ -3137,7 +3020,7 @@ function GroupDetail() {
                       </li>
 
                       <li>
-                        Registra gastos y pagos propios.
+                        Registra gastos comunes y pagos propios.
                       </li>
 
                       <li>
@@ -3151,7 +3034,7 @@ function GroupDetail() {
                       </li>
 
                       <li>
-                        Registra gastos de la actividad.
+                        Registra gastos comunes cuando la actividad esté activa.
                       </li>
 
                       <li>
@@ -3270,92 +3153,12 @@ function GroupDetail() {
                   </div>
                 </div>
 
-                <div className="mb-4">
-                  <label className="form-label">
-                    ¿Quién pagó?
-                  </label>
-
-                  <select
-                    name="pagado_por_id"
-                    className="form-control"
-                    value={edicionGastoData.pagado_por_id}
-                    onChange={handleEdicionGastoChange}
-                    disabled={guardandoEdicionGasto}
-                    required
-                  >
-                    <option value="">
-                      Selecciona al participante que pagó
-                    </option>
-
-                    {grupo?.participantes?.map(
-                      (participante) => (
-                        <option
-                          key={participante.id}
-                          value={participante.id}
-                        >
-                          {participante.nombre_completo} (@
-                          {participante.username})
-                        </option>
-                      )
-                    )}
-                  </select>
-                </div>
-
-                <div>
-                  <div className="d-flex justify-content-between align-items-center">
-                    <label className="form-label mb-0">
-                      Participantes incluidos
-                    </label>
-
-                    <small className="text-muted">
-                      Seleccionados: {participantesEdicion.length}
-                    </small>
-                  </div>
-
-                  <div className="mt-3">
-                    {grupo?.participantes?.map(
-                      (participante) => (
-                        <label
-                          key={participante.id}
-                          className="d-flex justify-content-between align-items-center border rounded p-3 mb-2"
-                          style={{ cursor: "pointer" }}
-                        >
-                          <div className="d-flex align-items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={participantesEdicion.includes(
-                                participante.id
-                              )}
-                              onChange={() =>
-                                alternarParticipanteEdicion(
-                                  participante.id
-                                )
-                              }
-                              disabled={guardandoEdicionGasto}
-                            />
-
-                            <div>
-                              <strong>
-                                {participante.nombre_completo}
-                              </strong>
-
-                              <small className="text-muted d-block">
-                                @{participante.username}
-                              </small>
-                            </div>
-                          </div>
-
-                          <span className="badge bg-light text-dark border">
-                            {participantesEdicion.includes(
-                              participante.id
-                            )
-                              ? "Incluido"
-                              : "No incluido"}
-                          </span>
-                        </label>
-                      )
-                    )}
-                  </div>
+                <div
+                  className="alert alert-light border mb-0"
+                  role="alert"
+                >
+                  Este gasto es común. Los integrantes asociados
+                  se conservarán y no se modifican manualmente.
                 </div>
               </div>
 
@@ -3464,29 +3267,23 @@ function GroupDetail() {
                   </div>
 
                   <div className="mt-4 p-3 border rounded bg-light">
-                    <small className="text-muted">Pagado por</small>
+                    <small className="text-muted">
+                      Tipo de registro
+                    </small>
+
                     <div className="fw-semibold">
-                      {gastoSeleccionado.pagado_por?.nombre_completo ||
-                        gastoSeleccionado.pagado_por?.username ||
-                        "Sin información"}
+                      Gasto común de la actividad
                     </div>
 
-                    {gastoSeleccionado.pagado_por?.username && (
-                      <small className="text-muted d-block">
-                        @{gastoSeleccionado.pagado_por.username}
-                      </small>
-                    )}
-
-                    {gastoSeleccionado.pagado_por?.email && (
-                      <small className="text-muted d-block">
-                        {gastoSeleccionado.pagado_por.email}
-                      </small>
-                    )}
+                    <small className="text-muted d-block">
+                      Asociado automáticamente a los integrantes
+                      que estaban activos al registrarlo.
+                    </small>
                   </div>
 
                   <div className="mt-4">
                     <div className="d-flex justify-content-between align-items-center mb-2">
-                      <h6 className="mb-0">Participantes incluidos</h6>
+                      <h6 className="mb-0">Integrantes asociados</h6>
                       <span className="badge bg-light text-dark border">
                         {gastoSeleccionado.participantes?.length || 0}
                       </span>

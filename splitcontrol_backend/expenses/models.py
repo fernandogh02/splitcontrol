@@ -92,6 +92,25 @@ class Group(models.Model):
 
         return self.ESTADO_CERRADA
 
+    def obtener_integrantes_activos(self):
+        return (
+            User.objects
+            .filter(
+                membresias_grupos__grupo=self,
+                membresias_grupos__activo=True,
+            )
+            .distinct()
+            .order_by("id")
+        )
+
+    @property
+    def total_gastos(self):
+        total = self.gastos.aggregate(
+            total=models.Sum("monto")
+        )["total"]
+
+        return total or Decimal("0.00")
+
 
 class GroupMembership(models.Model):
     grupo = models.ForeignKey(
@@ -206,12 +225,6 @@ class Expense(models.Model):
         ],
     )
 
-    pagado_por = models.ForeignKey(
-        User,
-        on_delete=models.PROTECT,
-        related_name="gastos_pagados",
-    )
-
     participantes = models.ManyToManyField(
         User,
         related_name="gastos_compartidos",
@@ -242,6 +255,18 @@ class Expense(models.Model):
             f"{self.descripcion} - "
             f"${self.monto}"
         )
+
+    @transaction.atomic
+    def sincronizar_integrantes_activos(self):
+        integrantes_activos = (
+            self.grupo.obtener_integrantes_activos()
+        )
+
+        self.participantes.set(
+            integrantes_activos
+        )
+
+        return self.calcular_division_equitativa()
 
     @transaction.atomic
     def calcular_division_equitativa(self):
