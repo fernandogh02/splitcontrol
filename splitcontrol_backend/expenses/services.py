@@ -2,7 +2,7 @@ from decimal import Decimal
 
 from django.db.models import Sum
 
-from .models import Expense, ExpenseDivision, Payment
+from .models import ExpenseDivision, Payment
 
 
 CERO = Decimal("0.00")
@@ -10,13 +10,6 @@ DOS_DECIMALES = Decimal("0.01")
 
 
 def calcular_balances_grupo(grupo):
-    gastos_pagados_agrupados = (
-        Expense.objects
-        .filter(grupo=grupo)
-        .values("pagado_por_id")
-        .annotate(total=Sum("monto"))
-    )
-
     valores_asignados = (
         ExpenseDivision.objects
         .filter(gasto__grupo=grupo)
@@ -37,11 +30,6 @@ def calcular_balances_grupo(grupo):
         .values("receptor_id")
         .annotate(total=Sum("monto"))
     )
-
-    gastos_pagados_por_participante = {
-        item["pagado_por_id"]: item["total"] or CERO
-        for item in gastos_pagados_agrupados
-    }
 
     asignado_por_participante = {
         item["participante_id"]: item["total"] or CERO
@@ -67,10 +55,7 @@ def calcular_balances_grupo(grupo):
     )
 
     for participante in participantes:
-        total_pagado = gastos_pagados_por_participante.get(
-            participante.id,
-            CERO,
-        ).quantize(DOS_DECIMALES)
+        total_pagado = CERO
 
         total_correspondiente = asignado_por_participante.get(
             participante.id,
@@ -88,8 +73,7 @@ def calcular_balances_grupo(grupo):
         ).quantize(DOS_DECIMALES)
 
         balance = (
-            total_pagado
-            - total_correspondiente
+            -total_correspondiente
             + pagos_realizados
             - pagos_recibidos
         ).quantize(DOS_DECIMALES)

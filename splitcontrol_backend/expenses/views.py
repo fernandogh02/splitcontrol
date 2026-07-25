@@ -56,6 +56,10 @@ def grupo_esta_cerrado(grupo):
     return grupo.estado == Group.ESTADO_CERRADA
 
 
+def grupo_esta_activo(grupo):
+    return grupo.estado == Group.ESTADO_ACTIVA
+
+
 class GroupListCreateView(generics.ListCreateAPIView):
     serializer_class = GroupSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -387,7 +391,6 @@ class ExpenseCreateView(APIView):
             .filter(grupo=grupo)
             .select_related(
                 "grupo",
-                "pagado_por",
                 "registrado_por",
             )
             .prefetch_related(
@@ -409,7 +412,8 @@ class ExpenseCreateView(APIView):
             {
                 "grupo_id": grupo.id,
                 "grupo_nombre": grupo.nombre,
-                "total_gastos": gastos.count(),
+                "total_registros": gastos.count(),
+                "total_gastos": f"{grupo.total_gastos:.2f}",
                 "gastos": serializer.data,
             },
             status=status.HTTP_200_OK,
@@ -432,12 +436,12 @@ class ExpenseCreateView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if grupo_esta_cerrado(grupo):
+        if not grupo_esta_activo(grupo):
             return Response(
                 {
                     "error": (
-                        "No se pueden registrar gastos porque "
-                        "la actividad está cerrada."
+                        "Solo se pueden registrar gastos mientras "
+                        "la actividad está activa."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
@@ -466,7 +470,6 @@ class ExpenseCreateView(APIView):
             Expense.objects
             .select_related(
                 "grupo",
-                "pagado_por",
                 "registrado_por",
             )
             .prefetch_related(
@@ -479,7 +482,10 @@ class ExpenseCreateView(APIView):
         return Response(
             {
                 "mensaje": (
-                    "Gasto registrado correctamente."
+                    "Gasto común registrado correctamente."
+                ),
+                "total_gastos": (
+                    f"{grupo.total_gastos:.2f}"
                 ),
                 "gasto": ExpenseSerializer(
                     gasto_actualizado
@@ -517,7 +523,6 @@ class ExpenseDetailView(APIView):
             )
             .select_related(
                 "grupo",
-                "pagado_por",
                 "registrado_por",
             )
             .prefetch_related(
@@ -581,7 +586,6 @@ class ExpenseDetailView(APIView):
             )
             .select_related(
                 "grupo",
-                "pagado_por",
                 "registrado_por",
             )
             .prefetch_related(
@@ -624,7 +628,6 @@ class ExpenseDetailView(APIView):
             Expense.objects
             .select_related(
                 "grupo",
-                "pagado_por",
                 "registrado_por",
             )
             .prefetch_related(

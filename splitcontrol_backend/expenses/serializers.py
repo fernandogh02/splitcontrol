@@ -90,6 +90,12 @@ class GroupSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
+    total_gastos = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+
     fecha_inicio = serializers.DateTimeField(
         required=False,
         allow_null=False,
@@ -111,6 +117,7 @@ class GroupSerializer(serializers.ModelSerializer):
             "fecha_inicio",
             "fecha_fin",
             "estado",
+            "total_gastos",
             "fecha_creacion",
         ]
 
@@ -119,6 +126,7 @@ class GroupSerializer(serializers.ModelSerializer):
             "creador_username",
             "participantes",
             "estado",
+            "total_gastos",
             "fecha_creacion",
         ]
 
@@ -224,30 +232,13 @@ class ExpenseDivisionSerializer(
 
 
 class ExpenseSerializer(serializers.ModelSerializer):
-    pagado_por = UserSimpleSerializer(
-        read_only=True,
-    )
-
-    pagado_por_id = (
-        serializers.PrimaryKeyRelatedField(
-            queryset=User.objects.all(),
-            source="pagado_por",
-            write_only=True,
-        )
+    fecha_gasto = serializers.DateField(
+        required=True,
     )
 
     participantes = UserSimpleSerializer(
         many=True,
         read_only=True,
-    )
-
-    participantes_ids = (
-        serializers.PrimaryKeyRelatedField(
-            queryset=User.objects.all(),
-            source="participantes",
-            many=True,
-            write_only=True,
-        )
     )
 
     divisiones = ExpenseDivisionSerializer(
@@ -267,10 +258,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
             "descripcion",
             "monto",
             "fecha_gasto",
-            "pagado_por",
-            "pagado_por_id",
             "participantes",
-            "participantes_ids",
             "divisiones",
             "registrado_por",
             "fecha_registro",
@@ -279,7 +267,6 @@ class ExpenseSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id",
             "grupo",
-            "pagado_por",
             "participantes",
             "divisiones",
             "registrado_por",
@@ -297,100 +284,13 @@ class ExpenseSerializer(serializers.ModelSerializer):
 
         return descripcion
 
-    def validate_participantes_ids(
-        self,
-        participantes,
-    ):
-        if not participantes:
-            raise serializers.ValidationError(
-                "Debe seleccionar al menos "
-                "un participante."
-            )
-
-        participantes_sin_repetir = []
-
-        for participante in participantes:
-            if (
-                participante
-                not in participantes_sin_repetir
-            ):
-                participantes_sin_repetir.append(
-                    participante
-                )
-
-        return participantes_sin_repetir
-
     def validate(self, attrs):
         grupo = self.context.get("grupo")
-
-        pagado_por = attrs.get(
-            "pagado_por",
-            getattr(
-                self.instance,
-                "pagado_por",
-                None,
-            ),
-        )
-
-        participantes = attrs.get(
-            "participantes"
-        )
-
-        if participantes is None:
-            if self.instance:
-                participantes = list(
-                    self.instance.participantes.all()
-                )
-            else:
-                participantes = []
 
         if not grupo:
             raise serializers.ValidationError(
                 "No se pudo identificar el grupo."
             )
-
-        if not pagado_por:
-            raise serializers.ValidationError({
-                "pagado_por_id": (
-                    "Debe seleccionar quién pagó "
-                    "el gasto."
-                )
-            })
-
-        if not grupo.participantes.filter(
-            id=pagado_por.id
-        ).exists():
-            raise serializers.ValidationError({
-                "pagado_por_id": (
-                    "La persona que pagó debe "
-                    "pertenecer al grupo."
-                )
-            })
-
-        if not participantes:
-            raise serializers.ValidationError({
-                "participantes_ids": (
-                    "Debe seleccionar al menos "
-                    "un participante."
-                )
-            })
-
-        participantes_invalidos = [
-            participante.id
-            for participante in participantes
-            if not grupo.participantes.filter(
-                id=participante.id
-            ).exists()
-        ]
-
-        if participantes_invalidos:
-            raise serializers.ValidationError({
-                "participantes_ids": (
-                    "Todos los participantes "
-                    "seleccionados deben pertenecer "
-                    "al grupo."
-                )
-            })
 
         return attrs
 
@@ -400,7 +300,7 @@ class ExpenseSerializer(serializers.ModelSerializer):
             validated_data
         )
 
-        gasto.calcular_division_equitativa()
+        gasto.sincronizar_integrantes_activos()
 
         return gasto
 
