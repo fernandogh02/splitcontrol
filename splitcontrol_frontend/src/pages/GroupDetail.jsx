@@ -214,6 +214,7 @@ function GroupDetail() {
   const displayName =
     username.charAt(0).toUpperCase() + username.slice(1);
   const avatarLetter = username.charAt(0).toUpperCase();
+  const esCreador = grupo?.creador_username === username;
 
   const obtenerMembresias = useCallback(async () => {
     const token = localStorage.getItem("access");
@@ -1556,13 +1557,15 @@ function GroupDetail() {
         </div>
 
         <div className="sidebar-bottom">
-          <button
-            type="button"
-            className="btn btn-primary w-100 mb-3"
-            onClick={irARegistrarPago}
-          >
-            Registrar pago
-          </button>
+          {esCreador && (
+            <button
+              type="button"
+              className="btn btn-primary w-100 mb-3"
+              onClick={irARegistrarPago}
+            >
+              Registrar pago
+            </button>
+          )}
 
           <div className="user-box">
             <div className="avatar">{avatarLetter}</div>
@@ -1633,11 +1636,24 @@ function GroupDetail() {
                     ).texto
                   }
                 </span>
+
+                <span
+                  className={`badge ${
+                    esCreador
+                      ? "bg-primary"
+                      : "bg-dark"
+                  }`}
+                >
+                  {esCreador
+                    ? "Creador"
+                    : "Participante"}
+                </span>
               </div>
 
               <p className="mt-2">
-                Revisa y administra la información general de
-                la actividad.
+                {esCreador
+                  ? "Revisa y administra la información general de la actividad."
+                  : "Consulta la información compartida de esta actividad."}
               </p>
             </header>
 
@@ -1648,7 +1664,7 @@ function GroupDetail() {
                     Información de la actividad
                   </h4>
 
-                  {!modoEdicion && (
+                  {!modoEdicion && esCreador && (
                     <div className="d-flex gap-2">
                       <button
                         type="button"
@@ -1688,6 +1704,17 @@ function GroupDetail() {
                     role="alert"
                   >
                     {error}
+                  </div>
+                )}
+
+                {!esCreador && (
+                  <div
+                    className="alert alert-info"
+                    role="alert"
+                  >
+                    Estás consultando esta actividad como
+                    participante. La administración está
+                    disponible únicamente para su creador.
                   </div>
                 )}
 
@@ -1969,34 +1996,39 @@ function GroupDetail() {
                                       Participante
                                     </span>
 
-                                    <button
-                                      type="button"
-                                      className="btn btn-outline-primary btn-sm"
-                                      onClick={() =>
-                                        iniciarEdicionParticipante(
-                                          participante
-                                        )
-                                      }
-                                    >
-                                      Editar
-                                    </button>
+                                    {esCreador && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          className="btn btn-outline-primary btn-sm"
+                                          onClick={() =>
+                                            iniciarEdicionParticipante(
+                                              participante
+                                            )
+                                          }
+                                        >
+                                          Editar
+                                        </button>
 
-                                    <button
-                                      type="button"
-                                      className="btn btn-outline-danger btn-sm"
-                                      onClick={() =>
-                                        eliminarParticipante(
-                                          participante.id
-                                        )
-                                      }
-                                    >
-                                      Retirar
-                                    </button>
+                                        <button
+                                          type="button"
+                                          className="btn btn-outline-danger btn-sm"
+                                          onClick={() =>
+                                            eliminarParticipante(
+                                              participante.id
+                                            )
+                                          }
+                                        >
+                                          Retirar
+                                        </button>
+                                      </>
+                                    )}
                                   </div>
                                 </div>
 
-                                {participanteEditando ===
-                                  participante.id && (
+                                {esCreador &&
+                                  participanteEditando ===
+                                    participante.id && (
                                   <div className="mt-3">
                                     <label className="form-label">
                                       Nota o rol del participante
@@ -2056,57 +2088,59 @@ function GroupDetail() {
                         </div>
                       )}
 
-                      <div className="mt-4">
-                        <label className="form-label">
-                          Agregar participante
-                        </label>
+                      {esCreador && (
+                        <div className="mt-4">
+                          <label className="form-label">
+                            Agregar participante
+                          </label>
 
-                        <div className="d-flex gap-2">
-                          <select
-                            className="form-control"
-                            value={usuarioSeleccionado}
-                            onChange={(e) =>
-                              setUsuarioSeleccionado(
-                                e.target.value
-                              )
-                            }
-                          >
-                            <option value="">
-                              Selecciona un usuario registrado
-                            </option>
+                          <div className="d-flex gap-2">
+                            <select
+                              className="form-control"
+                              value={usuarioSeleccionado}
+                              onChange={(e) =>
+                                setUsuarioSeleccionado(
+                                  e.target.value
+                                )
+                              }
+                            >
+                              <option value="">
+                                Selecciona un usuario registrado
+                              </option>
 
-                            {usuarios
-                              .filter(
-                                (usuario) =>
-                                  !grupo.participantes?.some(
-                                    (participante) =>
-                                      participante.id ===
-                                      usuario.id
-                                  )
-                              )
-                              .map((usuario) => (
-                                <option
-                                  key={usuario.id}
-                                  value={usuario.id}
-                                >
-                                  {usuario.nombre_completo} (@
-                                  {usuario.username})
-                                </option>
-                              ))}
-                          </select>
+                              {usuarios
+                                .filter(
+                                  (usuario) =>
+                                    !grupo.participantes?.some(
+                                      (participante) =>
+                                        participante.id ===
+                                        usuario.id
+                                    )
+                                )
+                                .map((usuario) => (
+                                  <option
+                                    key={usuario.id}
+                                    value={usuario.id}
+                                  >
+                                    {usuario.nombre_completo} (@
+                                    {usuario.username})
+                                  </option>
+                                ))}
+                            </select>
 
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            onClick={agregarParticipante}
-                            disabled={agregandoParticipante}
-                          >
-                            {agregandoParticipante
-                              ? "Agregando..."
-                              : "Agregar"}
-                          </button>
+                            <button
+                              type="button"
+                              className="btn btn-primary"
+                              onClick={agregarParticipante}
+                              disabled={agregandoParticipante}
+                            >
+                              {agregandoParticipante
+                                ? "Agregando..."
+                                : "Agregar"}
+                            </button>
+                          </div>
                         </div>
-                      </div>
+                      )}
 
                       <div className="mt-5 pt-4 border-top">
                         <div className="d-flex justify-content-between align-items-center gap-3">
@@ -2447,10 +2481,11 @@ function GroupDetail() {
                         )}
                       </div>
 
-                      <div
-                        id="registrar-pago"
-                        className="mt-5 pt-4 border-top"
-                      >
+                      {esCreador && (
+                        <div
+                          id="registrar-pago"
+                          className="mt-5 pt-4 border-top"
+                        >
                         <div>
                           <h5 className="mb-1">Registrar pago</h5>
 
@@ -2626,14 +2661,16 @@ function GroupDetail() {
                             </button>
                           </div>
                         </form>
-                      </div>
+                        </div>
+                      )}
 
-                      <div className="mt-5 pt-4 border-top">
-                        <div className="d-flex justify-content-between align-items-center">
-                          <div>
-                            <h5 className="mb-1">
-                              Registrar gasto
-                            </h5>
+                      {esCreador && (
+                        <div className="mt-5 pt-4 border-top">
+                          <div className="d-flex justify-content-between align-items-center">
+                            <div>
+                              <h5 className="mb-1">
+                                Registrar gasto
+                              </h5>
 
                             <small className="text-muted">
                               Ingresa la información del gasto
@@ -2832,7 +2869,8 @@ function GroupDetail() {
                             </button>
                           </div>
                         </form>
-                      </div>
+                        </div>
+                      )}
 
                       <div className="mt-5 pt-4 border-top">
                         <div className="d-flex justify-content-between align-items-center">
@@ -2898,28 +2936,36 @@ function GroupDetail() {
                                     </strong>
 
                                     <div className="d-flex gap-2 justify-content-end mt-2">
-                                      <button
-                                        type="button"
-                                        className="btn btn-outline-secondary btn-sm"
-                                        onClick={() =>
-                                          abrirEdicionGasto(gasto)
-                                        }
-                                      >
-                                        Editar
-                                      </button>
+                                      {esCreador && (
+                                        <>
+                                          <button
+                                            type="button"
+                                            className="btn btn-outline-secondary btn-sm"
+                                            onClick={() =>
+                                              abrirEdicionGasto(gasto)
+                                            }
+                                          >
+                                            Editar
+                                          </button>
 
-                                      <button
-                                        type="button"
-                                        className="btn btn-outline-danger btn-sm"
-                                        onClick={() => eliminarGasto(gasto)}
-                                        disabled={
-                                          eliminandoGastoId === gasto.id
-                                        }
-                                      >
-                                        {eliminandoGastoId === gasto.id
-                                          ? "Eliminando..."
-                                          : "Eliminar"}
-                                      </button>
+                                          <button
+                                            type="button"
+                                            className="btn btn-outline-danger btn-sm"
+                                            onClick={() =>
+                                              eliminarGasto(gasto)
+                                            }
+                                            disabled={
+                                              eliminandoGastoId ===
+                                              gasto.id
+                                            }
+                                          >
+                                            {eliminandoGastoId ===
+                                            gasto.id
+                                              ? "Eliminando..."
+                                              : "Eliminar"}
+                                          </button>
+                                        </>
+                                      )}
 
                                       <button
                                         type="button"
@@ -3040,9 +3086,9 @@ function GroupDetail() {
 
                     <div className="create-group-footer mt-4">
                       <small>
-                        ⓘ Los gastos registrados se guardan en
-                        la base de datos y quedan asociados a
-                        este grupo.
+                        {esCreador
+                          ? "ⓘ Los gastos registrados se guardan en la base de datos y quedan asociados a este grupo."
+                          : "ⓘ Puedes consultar la información de esta actividad, pero solo el creador puede administrarla."}
                       </small>
 
                       <button
@@ -3059,21 +3105,44 @@ function GroupDetail() {
 
               <aside className="benefits-column">
                 <div className="benefits-card">
-                  <h4>Gestión de gastos</h4>
+                  <h4>
+                    {esCreador
+                      ? "Gestión de gastos"
+                      : "Consulta compartida"}
+                  </h4>
 
-                  <ul>
-                    <li>
-                      Registra el concepto y el valor total.
-                    </li>
+                  {esCreador ? (
+                    <ul>
+                      <li>
+                        Registra el concepto y el valor total.
+                      </li>
 
-                    <li>
-                      Selecciona quién realizó el pago.
-                    </li>
+                      <li>
+                        Selecciona quién realizó el pago.
+                      </li>
 
-                    <li>
-                      Incluye a los participantes relacionados.
-                    </li>
-                  </ul>
+                      <li>
+                        Incluye a los participantes relacionados.
+                      </li>
+                    </ul>
+                  ) : (
+                    <ul>
+                      <li>
+                        Consulta los datos generales de la
+                        actividad.
+                      </li>
+
+                      <li>
+                        Revisa participantes, gastos y
+                        divisiones.
+                      </li>
+
+                      <li>
+                        Visualiza balances e historial de
+                        membresías.
+                      </li>
+                    </ul>
+                  )}
                 </div>
               </aside>
             </section>
@@ -3081,7 +3150,7 @@ function GroupDetail() {
         )}
       </main>
 
-      {edicionGastoAbierta && (
+      {esCreador && edicionGastoAbierta && (
         <div
           className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
           style={{

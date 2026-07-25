@@ -1527,3 +1527,390 @@ class GestionMembresiasHistorialTest(APITestCase):
                 "para consultar sus membresías."
             ),
         )
+
+
+class ConsultaActividadesCompartidasTest(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc45",
+            email="fernando_sc45@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc45",
+            email="carlita_sc45@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc45",
+            email="damarys_sc45@example.com",
+            password="Prueba123",
+        )
+
+        self.usuario_externo = User.objects.create_user(
+            username="externo_sc45",
+            email="externo_sc45@example.com",
+            password="Prueba123",
+        )
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad compartida SC-45",
+            descripcion="Actividad visible para miembros activos",
+            creador=self.fernando,
+        )
+
+        self.grupo.participantes.add(
+            self.fernando,
+            self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.fernando,
+        )
+
+        self.membresia_carlita = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.carlita,
+            )
+        )
+
+        membresia_damarys = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.damarys,
+        )
+        membresia_damarys.retirar()
+
+        self.gasto = Expense.objects.create(
+            grupo=self.grupo,
+            descripcion="Almuerzo compartido",
+            monto=Decimal("20.00"),
+            pagado_por=self.fernando,
+            registrado_por=self.fernando,
+        )
+
+        self.gasto.participantes.add(
+            self.fernando,
+            self.carlita,
+        )
+        self.gasto.calcular_division_equitativa()
+
+    def test_participante_activo_ve_actividad_en_listado(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response = self.client.get(
+            "/api/grupos/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        grupos_ids = [
+            grupo["id"]
+            for grupo in response.data
+        ]
+
+        self.assertIn(
+            self.grupo.id,
+            grupos_ids,
+        )
+
+        self.assertEqual(
+            grupos_ids.count(self.grupo.id),
+            1,
+        )
+
+    def test_creador_no_recibe_actividad_duplicada(self):
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+        response = self.client.get(
+            "/api/grupos/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        grupos_ids = [
+            grupo["id"]
+            for grupo in response.data
+        ]
+
+        self.assertEqual(
+            grupos_ids.count(self.grupo.id),
+            1,
+        )
+
+    def test_participante_retirado_no_ve_actividad_en_listado(self):
+        self.client.force_authenticate(
+            user=self.damarys
+        )
+
+        response = self.client.get(
+            "/api/grupos/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        grupos_ids = [
+            grupo["id"]
+            for grupo in response.data
+        ]
+
+        self.assertNotIn(
+            self.grupo.id,
+            grupos_ids,
+        )
+
+    def test_usuario_externo_no_ve_actividad_en_listado(self):
+        self.client.force_authenticate(
+            user=self.usuario_externo
+        )
+
+        response = self.client.get(
+            "/api/grupos/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        grupos_ids = [
+            grupo["id"]
+            for grupo in response.data
+        ]
+
+        self.assertNotIn(
+            self.grupo.id,
+            grupos_ids,
+        )
+
+    def test_participante_activo_puede_consultar_detalle(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response = self.client.get(
+            f"/api/grupos/{self.grupo.id}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["id"],
+            self.grupo.id,
+        )
+
+        self.assertEqual(
+            response.data["nombre"],
+            "Actividad compartida SC-45",
+        )
+
+        self.assertEqual(
+            response.data["creador_username"],
+            "fernando_sc45",
+        )
+
+    def test_retirado_y_externo_no_pueden_consultar_detalle(self):
+        for usuario in [
+            self.damarys,
+            self.usuario_externo,
+        ]:
+            self.client.force_authenticate(
+                user=usuario
+            )
+
+            response = self.client.get(
+                f"/api/grupos/{self.grupo.id}/"
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
+
+    def test_participante_activo_puede_consultar_datos_compartidos(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        rutas = [
+            f"/api/grupos/{self.grupo.id}/gastos/",
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"gastos/{self.gasto.id}/"
+            ),
+            f"/api/grupos/{self.grupo.id}/membresias/",
+            f"/api/grupos/{self.grupo.id}/balances/",
+            f"/api/grupos/{self.grupo.id}/deudas/",
+        ]
+
+        for ruta in rutas:
+            response = self.client.get(ruta)
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_200_OK,
+                msg=f"Falló la consulta de {ruta}",
+            )
+
+    def test_participante_activo_no_puede_editar_ni_eliminar_grupo(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response_patch = self.client.patch(
+            f"/api/grupos/{self.grupo.id}/",
+            {
+                "nombre": "Nombre no autorizado",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_patch.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.grupo.refresh_from_db()
+
+        self.assertEqual(
+            self.grupo.nombre,
+            "Actividad compartida SC-45",
+        )
+
+        response_delete = self.client.delete(
+            f"/api/grupos/{self.grupo.id}/"
+        )
+
+        self.assertEqual(
+            response_delete.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertTrue(
+            Group.objects.filter(
+                id=self.grupo.id
+            ).exists()
+        )
+
+    def test_participante_activo_no_puede_administrar_participantes(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response_agregar = self.client.post(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                "participantes/"
+            ),
+            {
+                "usuario_id": self.usuario_externo.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_agregar.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        response_retirar = self.client.delete(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"participantes/{self.fernando.id}/"
+            )
+        )
+
+        self.assertEqual(
+            response_retirar.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertFalse(
+            GroupMembership.objects.filter(
+                grupo=self.grupo,
+                usuario=self.usuario_externo,
+                activo=True,
+            ).exists()
+        )
+
+        self.membresia_carlita.refresh_from_db()
+
+        self.assertTrue(
+            self.membresia_carlita.activo
+        )
+
+    def test_participante_activo_no_puede_registrar_gastos_ni_pagos(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response_gasto = self.client.post(
+            f"/api/grupos/{self.grupo.id}/gastos/",
+            {
+                "descripcion": "Gasto no autorizado",
+                "monto": "10.00",
+                "fecha_gasto": "2026-07-25",
+                "pagado_por_id": self.carlita.id,
+                "participantes_ids": [
+                    self.fernando.id,
+                    self.carlita.id,
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_gasto.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        response_pago = self.client.post(
+            f"/api/grupos/{self.grupo.id}/pagos/",
+            {
+                "pagador_id": self.carlita.id,
+                "receptor_id": self.fernando.id,
+                "monto": "5.00",
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_pago.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertFalse(
+            Expense.objects.filter(
+                grupo=self.grupo,
+                descripcion="Gasto no autorizado",
+            ).exists()
+        )
+
+        self.assertFalse(
+            Payment.objects.filter(
+                grupo=self.grupo,
+                pagador=self.carlita,
+                receptor=self.fernando,
+            ).exists()
+        )

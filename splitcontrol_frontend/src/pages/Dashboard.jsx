@@ -2,6 +2,34 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/splitcontrol-logo.png";
 
+const obtenerConfiguracionEstado = (estado) => {
+  if (estado === "programada") {
+    return {
+      texto: "Programada",
+      clase: "bg-info text-dark",
+    };
+  }
+
+  if (estado === "activa") {
+    return {
+      texto: "Activa",
+      clase: "bg-success",
+    };
+  }
+
+  if (estado === "cerrada") {
+    return {
+      texto: "Cerrada",
+      clase: "bg-secondary",
+    };
+  }
+
+  return {
+    texto: "Sin configurar",
+    clase: "bg-warning text-dark",
+  };
+};
+
 function Dashboard() {
   const navigate = useNavigate();
 
@@ -10,7 +38,8 @@ function Dashboard() {
   const [errorGrupos, setErrorGrupos] = useState("");
 
   const username = localStorage.getItem("username") || "usuario";
-  const displayName = username.charAt(0).toUpperCase() + username.slice(1);
+  const displayName =
+    username.charAt(0).toUpperCase() + username.slice(1);
   const avatarLetter = username.charAt(0).toUpperCase();
 
   useEffect(() => {
@@ -18,27 +47,52 @@ function Dashboard() {
       const token = localStorage.getItem("access");
 
       if (!token) {
-        setErrorGrupos("Tu sesión ha expirado. Inicia sesión nuevamente.");
+        setErrorGrupos(
+          "Tu sesión ha expirado. Inicia sesión nuevamente."
+        );
         setCargandoGrupos(false);
         return;
       }
 
       try {
-        const response = await fetch("http://127.0.0.1:8000/api/grupos/", {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
+        setCargandoGrupos(true);
+        setErrorGrupos("");
 
-        if (!response.ok) {
-          throw new Error("No se pudieron cargar los grupos.");
+        const response = await fetch(
+          "http://127.0.0.1:8000/api/grupos/",
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        let data = [];
+
+        try {
+          data = await response.json();
+        } catch {
+          data = [];
         }
 
-        const data = await response.json();
-        setGrupos(data);
-      } catch {
-        setErrorGrupos("No se pudieron cargar tus grupos.");
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              data.detail ||
+              "No se pudieron cargar las actividades."
+          );
+        }
+
+        setGrupos(
+          Array.isArray(data) ? data : []
+        );
+      } catch (errorCarga) {
+        setGrupos([]);
+        setErrorGrupos(
+          errorCarga.message ||
+            "No se pudieron cargar tus actividades."
+        );
       } finally {
         setCargandoGrupos(false);
       }
@@ -67,14 +121,24 @@ function Dashboard() {
           </div>
 
           <nav className="sidebar-menu">
-            <button className="sidebar-link active">▦ Dashboard</button>
+            <button className="sidebar-link active">
+              ▦ Dashboard
+            </button>
 
-            <button className="sidebar-link" onClick={goToCreateGroup}>
+            <button
+              className="sidebar-link"
+              onClick={goToCreateGroup}
+            >
               👥 Grupos
             </button>
 
-            <button className="sidebar-link">↺ Historial</button>
-            <button className="sidebar-link">♙ Perfil</button>
+            <button className="sidebar-link">
+              ↺ Historial
+            </button>
+
+            <button className="sidebar-link">
+              ♙ Perfil
+            </button>
           </nav>
         </div>
 
@@ -84,7 +148,9 @@ function Dashboard() {
           </button>
 
           <div className="user-box">
-            <div className="avatar">{avatarLetter}</div>
+            <div className="avatar">
+              {avatarLetter}
+            </div>
 
             <div>
               <strong>{displayName}</strong>
@@ -105,41 +171,59 @@ function Dashboard() {
         <header className="dashboard-header">
           <div>
             <h1>Panel General</h1>
+
             <p>
-              Hola {displayName}, aquí tienes un resumen de tus cuentas hoy.
+              Hola {displayName}, aquí puedes consultar tus
+              actividades creadas y compartidas.
             </p>
           </div>
 
           <div className="header-actions">
-            <button className="icon-button">🔔</button>
-            <button className="icon-button">⚙️</button>
+            <button className="icon-button">
+              🔔
+            </button>
+
+            <button className="icon-button">
+              ⚙️
+            </button>
           </div>
         </header>
 
         <section className="summary-grid">
           <div className="summary-card debt">
-            <div className="summary-icon red">▣</div>
+            <div className="summary-icon red">
+              ▣
+            </div>
 
             <div>
               <span>Debes a otros</span>
               <h2>€0.00</h2>
-              <p>Sin deudas registradas por ahora</p>
+              <p>
+                Sin deudas registradas por ahora
+              </p>
             </div>
           </div>
 
           <div className="summary-card income">
-            <div className="summary-icon green">▣</div>
+            <div className="summary-icon green">
+              ▣
+            </div>
 
             <div>
               <span>Te deben</span>
               <h2>€0.00</h2>
-              <p>Sin cobros pendientes por ahora</p>
+              <p>
+                Sin cobros pendientes por ahora
+              </p>
             </div>
           </div>
         </section>
 
         <section className="quick-actions">
-          <button className="btn btn-primary" onClick={goToCreateGroup}>
+          <button
+            className="btn btn-primary"
+            onClick={goToCreateGroup}
+          >
             👥 Crear grupo
           </button>
 
@@ -162,62 +246,148 @@ function Dashboard() {
         <section className="dashboard-content">
           <div className="groups-section">
             <div className="section-title">
-              <h3>Mis grupos</h3>
+              <div>
+                <h3 className="mb-1">
+                  Mis actividades
+                </h3>
+
+                <small className="text-muted">
+                  Creadas por ti o compartidas contigo
+                </small>
+              </div>
 
               <button onClick={goToCreateGroup}>
-                Crear nuevo
+                Crear nueva
               </button>
             </div>
 
             {cargandoGrupos ? (
               <div className="empty-groups-card">
-                <h5>Cargando grupos...</h5>
-                <p>Estamos consultando tus grupos guardados.</p>
+                <h5>Cargando actividades...</h5>
+
+                <p>
+                  Estamos consultando tus actividades
+                  disponibles.
+                </p>
               </div>
             ) : errorGrupos ? (
               <div className="empty-groups-card">
-                <h5>No se pudieron cargar los grupos</h5>
+                <h5>
+                  No se pudieron cargar las actividades
+                </h5>
+
                 <p>{errorGrupos}</p>
 
-                <button className="btn btn-primary" onClick={goToCreateGroup}>
-                  Crear grupo
+                <button
+                  className="btn btn-primary"
+                  onClick={goToCreateGroup}
+                >
+                  Crear actividad
                 </button>
               </div>
             ) : grupos.length === 0 ? (
               <div className="empty-groups-card">
-                <h5>No tienes grupos creados todavía</h5>
+                <h5>
+                  No tienes actividades disponibles
+                </h5>
+
                 <p>
-                  Crea tu primer grupo para organizar gastos compartidos.
+                  Crea una actividad o espera a que otro usuario
+                  te agregue como participante.
                 </p>
 
-                <button className="btn btn-primary" onClick={goToCreateGroup}>
-                  Crear grupo
+                <button
+                  className="btn btn-primary"
+                  onClick={goToCreateGroup}
+                >
+                  Crear actividad
                 </button>
               </div>
             ) : (
-              grupos.map((grupo) => (
-                <div
-                  className="group-card"
-                  key={grupo.id}
-                  onClick={() => navigate(`/grupos/${grupo.id}`)}
-                  style={{ cursor: "pointer" }}
-                >
-                  <div className="group-image beach"></div>
+              grupos.map((grupo) => {
+                const esCreador =
+                  grupo.creador_username === username;
 
-                  <div className="group-info">
-                    <strong>{grupo.nombre}</strong>
-                    <small>
-                      Creado el{" "}
-                      {grupo.fecha_creacion
-                        ? new Date(grupo.fecha_creacion).toLocaleDateString()
-                        : "Sin fecha"}
-                    </small>
-                    <span>{grupo.descripcion || "Sin descripción"}</span>
+                const configuracionEstado =
+                  obtenerConfiguracionEstado(
+                    grupo.estado
+                  );
+
+                return (
+                  <div
+                    className="group-card"
+                    key={grupo.id}
+                    onClick={() =>
+                      navigate(`/grupos/${grupo.id}`)
+                    }
+                    style={{ cursor: "pointer" }}
+                  >
+                    <div className="group-image beach" />
+
+                    <div className="group-info">
+                      <div className="d-flex flex-wrap align-items-center gap-2 mb-1">
+                        <strong>{grupo.nombre}</strong>
+
+                        <span
+                          className={`badge ${
+                            esCreador
+                              ? "bg-primary"
+                              : "bg-dark"
+                          }`}
+                        >
+                          {esCreador
+                            ? "Creador"
+                            : "Participante"}
+                        </span>
+
+                        <span
+                          className={`badge ${configuracionEstado.clase}`}
+                        >
+                          {configuracionEstado.texto}
+                        </span>
+                      </div>
+
+                      <small>
+                        Creado por{" "}
+                        <strong>
+                          @{grupo.creador_username}
+                        </strong>
+                      </small>
+
+                      <small>
+                        Fecha de creación:{" "}
+                        {grupo.fecha_creacion
+                          ? new Date(
+                              grupo.fecha_creacion
+                            ).toLocaleDateString(
+                              "es-EC"
+                            )
+                          : "Sin fecha"}
+                      </small>
+
+                      <span>
+                        {grupo.descripcion ||
+                          "Sin descripción"}
+                      </span>
+
+                      <small className="text-muted">
+                        Participantes actuales:{" "}
+                        {grupo.participantes?.length || 0}
+                      </small>
+                    </div>
+
+                    <div className="text-end">
+                      <strong className="amount neutral">
+                        €0.00
+                      </strong>
+
+                      <small className="text-muted d-block mt-2">
+                        Ver actividad →
+                      </small>
+                    </div>
                   </div>
-
-                  <strong className="amount neutral">€0.00</strong>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
 
