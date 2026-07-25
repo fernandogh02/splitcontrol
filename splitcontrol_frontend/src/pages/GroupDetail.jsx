@@ -78,6 +78,16 @@ function GroupDetail() {
 
   const [registrandoGasto, setRegistrandoGasto] = useState(false);
 
+  const [pagoData, setPagoData] = useState({
+    pagador_id: "",
+    receptor_id: "",
+    monto: "",
+    fecha_pago: obtenerFechaActual(),
+  });
+  const [registrandoPago, setRegistrandoPago] = useState(false);
+  const [mensajePago, setMensajePago] = useState("");
+  const [errorPago, setErrorPago] = useState("");
+
   const [gastos, setGastos] = useState([]);
   const [cargandoGastos, setCargandoGastos] = useState(true);
   const [errorGastos, setErrorGastos] = useState("");
@@ -697,6 +707,16 @@ function GroupDetail() {
     });
   };
 
+  const handlePagoChange = (e) => {
+    setPagoData((datosActuales) => ({
+      ...datosActuales,
+      [e.target.name]: e.target.value,
+    }));
+
+    setMensajePago("");
+    setErrorPago("");
+  };
+
   const obtenerMensajeError = (
     data,
     mensajePredeterminado = "No se pudo completar la operación."
@@ -742,6 +762,107 @@ function GroupDetail() {
     }
 
     return String(detalle);
+  };
+
+  const registrarPago = async (e) => {
+    e.preventDefault();
+
+    setMensajePago("");
+    setErrorPago("");
+    setMensaje("");
+    setError("");
+
+    if (!pagoData.pagador_id) {
+      setErrorPago("Selecciona quién realiza el pago.");
+      return;
+    }
+
+    if (!pagoData.receptor_id) {
+      setErrorPago("Selecciona quién recibe el pago.");
+      return;
+    }
+
+    if (pagoData.pagador_id === pagoData.receptor_id) {
+      setErrorPago(
+        "La persona que paga y la que recibe deben ser diferentes."
+      );
+      return;
+    }
+
+    if (!pagoData.monto || Number(pagoData.monto) <= 0) {
+      setErrorPago("El monto del pago debe ser mayor que cero.");
+      return;
+    }
+
+    if (!pagoData.fecha_pago) {
+      setErrorPago("Selecciona la fecha del pago.");
+      return;
+    }
+
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setErrorPago(
+        "Tu sesión ha expirado. Inicia sesión nuevamente."
+      );
+      return;
+    }
+
+    try {
+      setRegistrandoPago(true);
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/pagos/`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            pagador_id: Number(pagoData.pagador_id),
+            receptor_id: Number(pagoData.receptor_id),
+            monto: pagoData.monto,
+            fecha_pago: pagoData.fecha_pago,
+          }),
+        }
+      );
+
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          obtenerMensajeError(
+            data,
+            "No se pudo registrar el pago."
+          )
+        );
+      }
+
+      setPagoData({
+        pagador_id: "",
+        receptor_id: "",
+        monto: "",
+        fecha_pago: obtenerFechaActual(),
+      });
+
+      setMensajePago(
+        data.mensaje || "Pago registrado correctamente."
+      );
+    } catch (errorRegistroPago) {
+      setErrorPago(
+        errorRegistroPago.message ||
+          "No se pudo registrar el pago."
+      );
+    } finally {
+      setRegistrandoPago(false);
+    }
   };
 
   const guardarCambios = async (e) => {
@@ -1114,6 +1235,18 @@ function GroupDetail() {
         return datosActuales;
       });
 
+      setPagoData((datosActuales) => ({
+        ...datosActuales,
+        pagador_id:
+          Number(datosActuales.pagador_id) === participanteId
+            ? ""
+            : datosActuales.pagador_id,
+        receptor_id:
+          Number(datosActuales.receptor_id) === participanteId
+            ? ""
+            : datosActuales.receptor_id,
+      }));
+
       setNotasParticipantes((notasActuales) => {
         const nuevasNotas = { ...notasActuales };
         delete nuevasNotas[participanteId];
@@ -1131,6 +1264,15 @@ function GroupDetail() {
           "No se pudo eliminar el participante."
       );
     }
+  };
+
+  const irARegistrarPago = () => {
+    document
+      .getElementById("registrar-pago")
+      ?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
   };
 
   const handleLogout = () => {
@@ -1171,7 +1313,11 @@ function GroupDetail() {
         </div>
 
         <div className="sidebar-bottom">
-          <button className="btn btn-primary w-100 mb-3">
+          <button
+            type="button"
+            className="btn btn-primary w-100 mb-3"
+            onClick={irARegistrarPago}
+          >
             Registrar pago
           </button>
 
@@ -1776,6 +1922,187 @@ function GroupDetail() {
                             )}
                           </>
                         )}
+                      </div>
+
+                      <div
+                        id="registrar-pago"
+                        className="mt-5 pt-4 border-top"
+                      >
+                        <div>
+                          <h5 className="mb-1">Registrar pago</h5>
+
+                          <small className="text-muted">
+                            Registra un pago realizado entre dos
+                            participantes del grupo.
+                          </small>
+                        </div>
+
+                        {mensajePago && (
+                          <div
+                            className="alert alert-success mt-3"
+                            role="alert"
+                          >
+                            {mensajePago}
+                          </div>
+                        )}
+
+                        {errorPago && (
+                          <div
+                            className="alert alert-danger mt-3"
+                            role="alert"
+                          >
+                            {errorPago}
+                          </div>
+                        )}
+
+                        {grupo.participantes?.length < 2 && (
+                          <div
+                            className="alert alert-warning mt-3"
+                            role="alert"
+                          >
+                            El grupo necesita al menos dos
+                            participantes para registrar un pago.
+                          </div>
+                        )}
+
+                        <form
+                          onSubmit={registrarPago}
+                          className="mt-3"
+                        >
+                          <div className="row">
+                            <div className="col-md-6 mb-3">
+                              <label className="form-label">
+                                ¿Quién realiza el pago?
+                              </label>
+
+                              <select
+                                name="pagador_id"
+                                className="form-control"
+                                value={pagoData.pagador_id}
+                                onChange={handlePagoChange}
+                                disabled={registrandoPago}
+                                required
+                              >
+                                <option value="">
+                                  Selecciona al participante que
+                                  paga
+                                </option>
+
+                                {grupo.participantes?.map(
+                                  (participante) => (
+                                    <option
+                                      key={participante.id}
+                                      value={participante.id}
+                                      disabled={
+                                        String(participante.id) ===
+                                        pagoData.receptor_id
+                                      }
+                                    >
+                                      {
+                                        participante.nombre_completo
+                                      }{" "}
+                                      (@{participante.username})
+                                    </option>
+                                  )
+                                )}
+                              </select>
+                            </div>
+
+                            <div className="col-md-6 mb-3">
+                              <label className="form-label">
+                                ¿Quién recibe el pago?
+                              </label>
+
+                              <select
+                                name="receptor_id"
+                                className="form-control"
+                                value={pagoData.receptor_id}
+                                onChange={handlePagoChange}
+                                disabled={registrandoPago}
+                                required
+                              >
+                                <option value="">
+                                  Selecciona al participante que
+                                  recibe
+                                </option>
+
+                                {grupo.participantes?.map(
+                                  (participante) => (
+                                    <option
+                                      key={participante.id}
+                                      value={participante.id}
+                                      disabled={
+                                        String(participante.id) ===
+                                        pagoData.pagador_id
+                                      }
+                                    >
+                                      {
+                                        participante.nombre_completo
+                                      }{" "}
+                                      (@{participante.username})
+                                    </option>
+                                  )
+                                )}
+                              </select>
+                            </div>
+
+                            <div className="col-md-6 mb-3">
+                              <label className="form-label">
+                                Monto del pago
+                              </label>
+
+                              <input
+                                type="number"
+                                name="monto"
+                                className="form-control"
+                                placeholder="0.00"
+                                min="0.01"
+                                step="0.01"
+                                value={pagoData.monto}
+                                onChange={handlePagoChange}
+                                disabled={registrandoPago}
+                                required
+                              />
+                            </div>
+
+                            <div className="col-md-6 mb-3">
+                              <label className="form-label">
+                                Fecha del pago
+                              </label>
+
+                              <input
+                                type="date"
+                                name="fecha_pago"
+                                className="form-control"
+                                value={pagoData.fecha_pago}
+                                onChange={handlePagoChange}
+                                disabled={registrandoPago}
+                                required
+                              />
+                            </div>
+                          </div>
+
+                          <div className="d-flex justify-content-between align-items-center gap-3 mt-2">
+                            <small className="text-muted">
+                              El pago quedará asociado a este
+                              grupo y al usuario que lo registra.
+                            </small>
+
+                            <button
+                              type="submit"
+                              className="btn btn-primary"
+                              disabled={
+                                registrandoPago ||
+                                !grupo.participantes ||
+                                grupo.participantes.length < 2
+                              }
+                            >
+                              {registrandoPago
+                                ? "Registrando pago..."
+                                : "Registrar pago"}
+                            </button>
+                          </div>
+                        </form>
                       </div>
 
                       <div className="mt-5 pt-4 border-top">
