@@ -93,6 +93,97 @@ class Group(models.Model):
         return self.ESTADO_CERRADA
 
 
+class GroupMembership(models.Model):
+    grupo = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name="membresias",
+    )
+
+    usuario = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="membresias_grupos",
+    )
+
+    fecha_ingreso = models.DateTimeField(
+        default=timezone.now,
+        editable=False,
+    )
+
+    fecha_salida = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    activo = models.BooleanField(
+        default=True,
+    )
+
+    class Meta:
+        ordering = [
+            "-fecha_ingreso",
+            "-id",
+        ]
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "grupo",
+                    "usuario",
+                ],
+                condition=models.Q(activo=True),
+                name=(
+                    "membresia_activa_unica_"
+                    "por_grupo_usuario"
+                ),
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        activo=True,
+                        fecha_salida__isnull=True,
+                    )
+                    | models.Q(
+                        activo=False,
+                        fecha_salida__isnull=False,
+                    )
+                ),
+                name=(
+                    "membresia_estado_fecha_"
+                    "salida_consistentes"
+                ),
+            ),
+        ]
+
+    def __str__(self):
+        estado = (
+            "Activo"
+            if self.activo
+            else "Retirado"
+        )
+
+        return (
+            f"{self.usuario.username} - "
+            f"{self.grupo.nombre} - "
+            f"{estado}"
+        )
+
+    def retirar(self):
+        if not self.activo:
+            return
+
+        self.activo = False
+        self.fecha_salida = timezone.now()
+
+        self.save(
+            update_fields=[
+                "activo",
+                "fecha_salida",
+            ]
+        )
+
+
 class Expense(models.Model):
     grupo = models.ForeignKey(
         Group,
@@ -141,10 +232,16 @@ class Expense(models.Model):
     )
 
     class Meta:
-        ordering = ["-fecha_gasto", "-fecha_registro"]
+        ordering = [
+            "-fecha_gasto",
+            "-fecha_registro",
+        ]
 
     def __str__(self):
-        return f"{self.descripcion} - ${self.monto}"
+        return (
+            f"{self.descripcion} - "
+            f"${self.monto}"
+        )
 
     @transaction.atomic
     def calcular_division_equitativa(self):
@@ -157,14 +254,22 @@ class Expense(models.Model):
             return []
 
         monto_centavos = int(
-            (self.monto * Decimal("100")).quantize(
+            (
+                self.monto
+                * Decimal("100")
+            ).quantize(
                 Decimal("1")
             )
         )
 
-        cantidad_participantes = len(participantes)
+        cantidad_participantes = len(
+            participantes
+        )
 
-        monto_base_centavos, centavos_restantes = divmod(
+        (
+            monto_base_centavos,
+            centavos_restantes,
+        ) = divmod(
             monto_centavos,
             cantidad_participantes,
         )
@@ -173,14 +278,19 @@ class Expense(models.Model):
 
         divisiones = []
 
-        for indice, participante in enumerate(participantes):
-            centavos_asignados = monto_base_centavos
+        for indice, participante in enumerate(
+            participantes
+        ):
+            centavos_asignados = (
+                monto_base_centavos
+            )
 
             if indice < centavos_restantes:
                 centavos_asignados += 1
 
             monto_asignado = (
-                Decimal(centavos_asignados) / Decimal("100")
+                Decimal(centavos_asignados)
+                / Decimal("100")
             )
 
             divisiones.append(
@@ -191,7 +301,9 @@ class Expense(models.Model):
                 )
             )
 
-        return ExpenseDivision.objects.bulk_create(divisiones)
+        return ExpenseDivision.objects.bulk_create(
+            divisiones
+        )
 
 
 class ExpenseDivision(models.Model):
@@ -226,19 +338,28 @@ class ExpenseDivision(models.Model):
     )
 
     class Meta:
-        ordering = ["participante__username"]
+        ordering = [
+            "participante__username"
+        ]
 
         constraints = [
             models.UniqueConstraint(
-                fields=["gasto", "participante"],
-                name="division_unica_por_gasto_participante",
+                fields=[
+                    "gasto",
+                    "participante",
+                ],
+                name=(
+                    "division_unica_por_"
+                    "gasto_participante"
+                ),
             )
         ]
 
     def __str__(self):
         return (
             f"{self.participante.username} debe "
-            f"${self.monto_asignado} en {self.gasto.descripcion}"
+            f"${self.monto_asignado} en "
+            f"{self.gasto.descripcion}"
         )
 
 
@@ -267,7 +388,10 @@ class Payment(models.Model):
         validators=[
             MinValueValidator(
                 Decimal("0.01"),
-                message="El monto del pago debe ser mayor que cero.",
+                message=(
+                    "El monto del pago debe ser "
+                    "mayor que cero."
+                ),
             )
         ],
     )
@@ -287,19 +411,28 @@ class Payment(models.Model):
     )
 
     class Meta:
-        ordering = ["-fecha_pago", "-fecha_registro"]
+        ordering = [
+            "-fecha_pago",
+            "-fecha_registro",
+        ]
 
         constraints = [
             models.CheckConstraint(
                 condition=~models.Q(
-                    pagador=models.F("receptor")
+                    pagador=models.F(
+                        "receptor"
+                    )
                 ),
-                name="pago_pagador_receptor_diferentes",
+                name=(
+                    "pago_pagador_receptor_"
+                    "diferentes"
+                ),
             )
         ]
 
     def __str__(self):
         return (
             f"{self.pagador.username} pagó "
-            f"${self.monto} a {self.receptor.username}"
+            f"${self.monto} a "
+            f"{self.receptor.username}"
         )

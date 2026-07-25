@@ -7,7 +7,12 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from expenses.models import Expense, Group, Payment
+from expenses.models import (
+    Expense,
+    Group,
+    GroupMembership,
+    Payment,
+)
 
 
 class PruebaApiBackendTest(APITestCase):
@@ -1082,3 +1087,443 @@ class VigenciaEstadoActividadTest(APITestCase):
                 grupo.estado,
                 Group.ESTADO_CERRADA,
             )
+
+
+class GestionMembresiasHistorialTest(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc44",
+            email="fernando_sc44@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc44",
+            email="carlita_sc44@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc44",
+            email="damarys_sc44@example.com",
+            password="Prueba123",
+        )
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad SC-44",
+            descripcion="Pruebas de membresías con historial",
+            creador=self.fernando,
+        )
+
+        self.grupo.participantes.add(
+            self.fernando
+        )
+
+        self.membresia_creador = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.fernando,
+            )
+        )
+
+        self.url_agregar = (
+            f"/api/grupos/{self.grupo.id}/"
+            "participantes/"
+        )
+
+        self.url_historial = (
+            f"/api/grupos/{self.grupo.id}/"
+            "membresias/"
+        )
+
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+    def test_crear_actividad_genera_membresia_del_creador(self):
+        fecha_inicio = timezone.now() + timedelta(days=1)
+        fecha_fin = fecha_inicio + timedelta(days=2)
+
+        response = self.client.post(
+            "/api/grupos/",
+            {
+                "nombre": "Nueva actividad SC-44",
+                "descripcion": "Actividad con membresía inicial",
+                "fecha_inicio": fecha_inicio.isoformat(),
+                "fecha_fin": fecha_fin.isoformat(),
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        grupo_creado = Group.objects.get(
+            id=response.data["id"]
+        )
+
+        membresia = GroupMembership.objects.get(
+            grupo=grupo_creado,
+            usuario=self.fernando,
+        )
+
+        self.assertTrue(
+            membresia.activo
+        )
+
+        self.assertIsNone(
+            membresia.fecha_salida
+        )
+
+        self.assertTrue(
+            grupo_creado.participantes.filter(
+                id=self.fernando.id
+            ).exists()
+        )
+
+    def test_agregar_participante_crea_membresia_activa(self):
+        response = self.client.post(
+            self.url_agregar,
+            {
+                "usuario_id": self.carlita.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            "Participante agregado correctamente.",
+        )
+
+        membresia = GroupMembership.objects.get(
+            grupo=self.grupo,
+            usuario=self.carlita,
+        )
+
+        self.assertTrue(
+            membresia.activo
+        )
+
+        self.assertIsNone(
+            membresia.fecha_salida
+        )
+
+        self.assertTrue(
+            self.grupo.participantes.filter(
+                id=self.carlita.id
+            ).exists()
+        )
+
+        self.assertEqual(
+            response.data["membresia"]["estado"],
+            "activo",
+        )
+
+    def test_no_permite_duplicar_membresia_activa(self):
+        primera_respuesta = self.client.post(
+            self.url_agregar,
+            {
+                "usuario_id": self.carlita.id,
+            },
+            format="json",
+        )
+
+        segunda_respuesta = self.client.post(
+            self.url_agregar,
+            {
+                "usuario_id": self.carlita.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            primera_respuesta.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            segunda_respuesta.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            segunda_respuesta.data["error"],
+            (
+                "El usuario ya es participante activo "
+                "del grupo."
+            ),
+        )
+
+        self.assertEqual(
+            GroupMembership.objects.filter(
+                grupo=self.grupo,
+                usuario=self.carlita,
+                activo=True,
+            ).count(),
+            1,
+        )
+
+    def test_retirar_participante_conserva_historial(self):
+        self.client.post(
+            self.url_agregar,
+            {
+                "usuario_id": self.carlita.id,
+            },
+            format="json",
+        )
+
+        response = self.client.delete(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"participantes/{self.carlita.id}/"
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            "Participante retirado correctamente.",
+        )
+
+        membresia = GroupMembership.objects.get(
+            grupo=self.grupo,
+            usuario=self.carlita,
+        )
+
+        self.assertFalse(
+            membresia.activo
+        )
+
+        self.assertIsNotNone(
+            membresia.fecha_salida
+        )
+
+        self.assertFalse(
+            self.grupo.participantes.filter(
+                id=self.carlita.id
+            ).exists()
+        )
+
+        self.assertEqual(
+            response.data["membresia"]["estado"],
+            "retirado",
+        )
+
+    def test_no_permite_retirar_al_creador(self):
+        response = self.client.delete(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"participantes/{self.fernando.id}/"
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response.data["error"],
+            "No puedes eliminar al creador del grupo.",
+        )
+
+        self.membresia_creador.refresh_from_db()
+
+        self.assertTrue(
+            self.membresia_creador.activo
+        )
+
+        self.assertTrue(
+            self.grupo.participantes.filter(
+                id=self.fernando.id
+            ).exists()
+        )
+
+    def test_participante_retirado_puede_reingresar(self):
+        self.client.post(
+            self.url_agregar,
+            {
+                "usuario_id": self.carlita.id,
+            },
+            format="json",
+        )
+
+        self.client.delete(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"participantes/{self.carlita.id}/"
+            )
+        )
+
+        response = self.client.post(
+            self.url_agregar,
+            {
+                "usuario_id": self.carlita.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        membresias = GroupMembership.objects.filter(
+            grupo=self.grupo,
+            usuario=self.carlita,
+        ).order_by("fecha_ingreso", "id")
+
+        self.assertEqual(
+            membresias.count(),
+            2,
+        )
+
+        self.assertEqual(
+            membresias.filter(
+                activo=False
+            ).count(),
+            1,
+        )
+
+        self.assertEqual(
+            membresias.filter(
+                activo=True
+            ).count(),
+            1,
+        )
+
+        membresia_retirada = membresias.filter(
+            activo=False
+        ).first()
+
+        membresia_activa = membresias.filter(
+            activo=True
+        ).first()
+
+        self.assertIsNotNone(
+            membresia_retirada.fecha_salida
+        )
+
+        self.assertIsNone(
+            membresia_activa.fecha_salida
+        )
+
+        self.assertTrue(
+            self.grupo.participantes.filter(
+                id=self.carlita.id
+            ).exists()
+        )
+
+    def test_historial_muestra_membresias_activas_y_retiradas(self):
+        self.client.post(
+            self.url_agregar,
+            {
+                "usuario_id": self.carlita.id,
+            },
+            format="json",
+        )
+
+        self.client.delete(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"participantes/{self.carlita.id}/"
+            )
+        )
+
+        self.client.post(
+            self.url_agregar,
+            {
+                "usuario_id": self.damarys.id,
+            },
+            format="json",
+        )
+
+        response = self.client.get(
+            self.url_historial
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["grupo_id"],
+            self.grupo.id,
+        )
+
+        self.assertEqual(
+            response.data["total_membresias"],
+            3,
+        )
+
+        self.assertEqual(
+            response.data["total_activas"],
+            2,
+        )
+
+        self.assertEqual(
+            response.data["total_retiradas"],
+            1,
+        )
+
+        estados_por_usuario = {}
+
+        for membresia in response.data["membresias"]:
+            username = membresia["usuario"]["username"]
+
+            estados_por_usuario.setdefault(
+                username,
+                [],
+            ).append(
+                membresia["estado"]
+            )
+
+        self.assertIn(
+            "activo",
+            estados_por_usuario["fernando_sc44"],
+        )
+
+        self.assertIn(
+            "retirado",
+            estados_por_usuario["carlita_sc44"],
+        )
+
+        self.assertIn(
+            "activo",
+            estados_por_usuario["damarys_sc44"],
+        )
+
+    def test_usuario_no_creador_no_puede_consultar_historial(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response = self.client.get(
+            self.url_historial
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertEqual(
+            response.data["error"],
+            (
+                "Grupo no encontrado o no tienes permiso "
+                "para consultar sus membresías."
+            ),
+        )

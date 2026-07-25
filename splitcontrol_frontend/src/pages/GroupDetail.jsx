@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import logo from "../assets/splitcontrol-logo.png";
 
@@ -200,10 +200,90 @@ function GroupDetail() {
   const [mensaje, setMensaje] = useState("");
   const [error, setError] = useState("");
 
+  const [membresias, setMembresias] = useState([]);
+  const [resumenMembresias, setResumenMembresias] = useState({
+    total_membresias: 0,
+    total_activas: 0,
+    total_retiradas: 0,
+  });
+  const [cargandoMembresias, setCargandoMembresias] =
+    useState(true);
+  const [errorMembresias, setErrorMembresias] = useState("");
+
   const username = localStorage.getItem("username") || "usuario";
   const displayName =
     username.charAt(0).toUpperCase() + username.slice(1);
   const avatarLetter = username.charAt(0).toUpperCase();
+
+  const obtenerMembresias = useCallback(async () => {
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setErrorMembresias(
+        "Tu sesión ha expirado. Inicia sesión nuevamente."
+      );
+      setCargandoMembresias(false);
+      return;
+    }
+
+    try {
+      setCargandoMembresias(true);
+      setErrorMembresias("");
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/membresias/`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "No se pudo cargar el historial de membresías."
+        );
+      }
+
+      setMembresias(
+        Array.isArray(data.membresias)
+          ? data.membresias
+          : []
+      );
+
+      setResumenMembresias({
+        total_membresias:
+          Number(data.total_membresias) || 0,
+        total_activas:
+          Number(data.total_activas) || 0,
+        total_retiradas:
+          Number(data.total_retiradas) || 0,
+      });
+    } catch (errorHistorial) {
+      setMembresias([]);
+      setResumenMembresias({
+        total_membresias: 0,
+        total_activas: 0,
+        total_retiradas: 0,
+      });
+      setErrorMembresias(
+        errorHistorial.message ||
+          "No se pudo cargar el historial de membresías."
+      );
+    } finally {
+      setCargandoMembresias(false);
+    }
+  }, [id]);
 
   const obtenerBalances = async () => {
     const token = localStorage.getItem("access");
@@ -308,6 +388,16 @@ function GroupDetail() {
 
     obtenerDetalleGrupo();
   }, [id]);
+
+  useEffect(() => {
+  const temporizador = setTimeout(() => {
+    obtenerMembresias();
+  }, 0);
+
+  return () => {
+    clearTimeout(temporizador);
+  };
+}, [obtenerMembresias]);
 
   useEffect(() => {
     const obtenerUsuarios = async () => {
@@ -1310,8 +1400,11 @@ function GroupDetail() {
 
       setGrupo(data.grupo);
       setUsuarioSeleccionado("");
-      setMensaje("Participante agregado correctamente.");
+      setMensaje(
+        data.mensaje || "Participante agregado correctamente."
+      );
 
+      await obtenerMembresias();
       await obtenerBalances();
     } catch (errorParticipante) {
       setError(
@@ -1325,7 +1418,7 @@ function GroupDetail() {
 
   const eliminarParticipante = async (participanteId) => {
     const confirmar = window.confirm(
-      "¿Deseas eliminar este participante del grupo?"
+      "¿Deseas retirar este participante de la actividad? Su historial se conservará."
     );
 
     if (!confirmar) {
@@ -1402,8 +1495,11 @@ function GroupDetail() {
 
       setParticipanteEditando(null);
       setNotaTemporal("");
-      setMensaje("Participante eliminado correctamente.");
+      setMensaje(
+        data.mensaje || "Participante retirado correctamente."
+      );
 
+      await obtenerMembresias();
       await obtenerBalances();
     } catch (errorParticipante) {
       setError(
@@ -1894,7 +1990,7 @@ function GroupDetail() {
                                         )
                                       }
                                     >
-                                      Eliminar
+                                      Retirar
                                     </button>
                                   </div>
                                 </div>
@@ -2010,6 +2106,170 @@ function GroupDetail() {
                               : "Agregar"}
                           </button>
                         </div>
+                      </div>
+
+                      <div className="mt-5 pt-4 border-top">
+                        <div className="d-flex justify-content-between align-items-center gap-3">
+                          <div>
+                            <h5 className="mb-1">
+                              Historial de membresías
+                            </h5>
+
+                            <small className="text-muted">
+                              Consulta los ingresos, retiros y
+                              reingresos de los participantes.
+                            </small>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="btn btn-outline-primary btn-sm"
+                            onClick={obtenerMembresias}
+                            disabled={cargandoMembresias}
+                          >
+                            {cargandoMembresias
+                              ? "Actualizando..."
+                              : "Actualizar"}
+                          </button>
+                        </div>
+
+                        <div className="row g-3 mt-1">
+                          <div className="col-md-4">
+                            <div className="border rounded p-3 h-100 bg-light">
+                              <small className="text-muted d-block">
+                                Registros históricos
+                              </small>
+
+                              <strong className="fs-5">
+                                {
+                                  resumenMembresias.total_membresias
+                                }
+                              </strong>
+                            </div>
+                          </div>
+
+                          <div className="col-md-4">
+                            <div className="border rounded p-3 h-100 bg-light">
+                              <small className="text-muted d-block">
+                                Membresías activas
+                              </small>
+
+                              <strong className="fs-5">
+                                {resumenMembresias.total_activas}
+                              </strong>
+                            </div>
+                          </div>
+
+                          <div className="col-md-4">
+                            <div className="border rounded p-3 h-100 bg-light">
+                              <small className="text-muted d-block">
+                                Membresías retiradas
+                              </small>
+
+                              <strong className="fs-5">
+                                {
+                                  resumenMembresias.total_retiradas
+                                }
+                              </strong>
+                            </div>
+                          </div>
+                        </div>
+
+                        {cargandoMembresias ? (
+                          <div
+                            className="alert alert-light border mt-3"
+                            role="alert"
+                          >
+                            Cargando historial de membresías...
+                          </div>
+                        ) : errorMembresias ? (
+                          <div
+                            className="alert alert-danger mt-3"
+                            role="alert"
+                          >
+                            {errorMembresias}
+                          </div>
+                        ) : membresias.length === 0 ? (
+                          <div className="alert alert-light border mt-3 mb-0">
+                            No hay membresías registradas para
+                            esta actividad.
+                          </div>
+                        ) : (
+                          <div className="d-flex flex-column gap-3 mt-3">
+                            {membresias.map((membresia) => (
+                              <div
+                                key={membresia.id}
+                                className="border rounded p-3"
+                              >
+                                <div className="d-flex justify-content-between align-items-start gap-3">
+                                  <div>
+                                    <strong>
+                                      {membresia.usuario
+                                        ?.nombre_completo ||
+                                        membresia.usuario
+                                          ?.username ||
+                                        "Usuario"}
+                                    </strong>
+
+                                    {membresia.usuario?.username && (
+                                      <small className="text-muted d-block">
+                                        @
+                                        {
+                                          membresia.usuario
+                                            .username
+                                        }
+                                      </small>
+                                    )}
+                                  </div>
+
+                                  <span
+                                    className={`badge ${
+                                      membresia.activo
+                                        ? "bg-success"
+                                        : "bg-secondary"
+                                    }`}
+                                  >
+                                    {membresia.activo
+                                      ? "Activo"
+                                      : "Retirado"}
+                                  </span>
+                                </div>
+
+                                <div className="row g-2 mt-2">
+                                  <div className="col-md-6">
+                                    <div className="bg-light border rounded p-2 h-100">
+                                      <small className="text-muted d-block">
+                                        Fecha de ingreso
+                                      </small>
+
+                                      <strong>
+                                        {formatearFechaHora(
+                                          membresia.fecha_ingreso
+                                        )}
+                                      </strong>
+                                    </div>
+                                  </div>
+
+                                  <div className="col-md-6">
+                                    <div className="bg-light border rounded p-2 h-100">
+                                      <small className="text-muted d-block">
+                                        Fecha de salida
+                                      </small>
+
+                                      <strong>
+                                        {membresia.fecha_salida
+                                          ? formatearFechaHora(
+                                              membresia.fecha_salida
+                                            )
+                                          : "Continúa en la actividad"}
+                                      </strong>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
 
                       <div className="mt-5 pt-4 border-top">
