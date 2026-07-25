@@ -1,15 +1,17 @@
 from decimal import Decimal
 
 from django.contrib.auth.models import User
+from django.db import transaction
 from django.http import JsonResponse
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Expense, Group, Payment
+from .models import Expense, Group, GroupMembership, Payment
 from .services import calcular_balances_grupo, calcular_deudas_grupo
 from .serializers import (
     ExpenseSerializer,
+    GroupMembershipSerializer,
     GroupSerializer,
     PaymentSerializer,
     UserSimpleSerializer,
@@ -31,6 +33,7 @@ class GroupListCreateView(generics.ListCreateAPIView):
             creador=self.request.user
         )
 
+    @transaction.atomic
     def perform_create(self, serializer):
         grupo = serializer.save(
             creador=self.request.user
@@ -38,6 +41,11 @@ class GroupListCreateView(generics.ListCreateAPIView):
 
         grupo.participantes.add(
             self.request.user
+        )
+
+        GroupMembership.objects.create(
+            grupo=grupo,
+            usuario=self.request.user,
         )
 
 
@@ -102,19 +110,36 @@ class AddParticipantView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if grupo.participantes.filter(
-            id=usuario.id
-        ).exists():
+        membresia_activa = (
+            GroupMembership.objects
+            .filter(
+                grupo=grupo,
+                usuario=usuario,
+                activo=True,
+            )
+            .first()
+        )
+
+        if membresia_activa:
+            grupo.participantes.add(usuario)
+
             return Response(
                 {
                     "error": (
-                        "El usuario ya es participante del grupo."
+                        "El usuario ya es participante activo "
+                        "del grupo."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        grupo.participantes.add(usuario)
+        with transaction.atomic():
+            membresia = GroupMembership.objects.create(
+                grupo=grupo,
+                usuario=usuario,
+            )
+
+            grupo.participantes.add(usuario)
 
         serializer = GroupSerializer(grupo)
 
@@ -124,6 +149,11 @@ class AddParticipantView(APIView):
                     "Participante agregado correctamente."
                 ),
                 "grupo": serializer.data,
+                "membresia": (
+                    GroupMembershipSerializer(
+                        membresia
+                    ).data
+                ),
             },
             status=status.HTTP_200_OK,
         )
@@ -168,28 +198,103 @@ class RemoveParticipantView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not grupo.participantes.filter(
-            id=usuario.id
-        ).exists():
+        membresia = (
+            GroupMembership.objects
+            .filter(
+                grupo=grupo,
+                usuario=usuario,
+                activo=True,
+            )
+            .first()
+        )
+
+        if not membresia:
             return Response(
                 {
                     "error": (
-                        "El usuario no pertenece a este grupo."
+                        "El usuario no pertenece actualmente "
+                        "a este grupo."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        grupo.participantes.remove(usuario)
+        with transaction.atomic():
+            membresia.retirar()
+            grupo.participantes.remove(usuario)
 
         serializer = GroupSerializer(grupo)
 
         return Response(
             {
                 "mensaje": (
-                    "Participante eliminado correctamente."
+                    "Participante retirado correctamente."
                 ),
                 "grupo": serializer.data,
+                "membresia": (
+                    GroupMembershipSerializer(
+                        membresia
+                    ).data
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class GroupMembershipHistoryView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        grupo = Group.objects.filter(
+            id=pk,
+            creador=request.user,
+        ).first()
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar sus membresías."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        membresias = (
+            GroupMembership.objects
+            .filter(grupo=grupo)
+            .select_related(
+                "grupo",
+                "usuario",
+            )
+            .order_by(
+                "-fecha_ingreso",
+                "-id",
+            )
+        )
+
+        total_activas = membresias.filter(
+            activo=True
+        ).count()
+
+        total_retiradas = membresias.filter(
+            activo=False
+        ).count()
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "total_membresias": membresias.count(),
+                "total_activas": total_activas,
+                "total_retiradas": total_retiradas,
+                "membresias": (
+                    GroupMembershipSerializer(
+                        membresias,
+                        many=True,
+                    ).data
+                ),
             },
             status=status.HTTP_200_OK,
         )
@@ -502,6 +607,7 @@ class ExpenseDetailView(APIView):
             status=status.HTTP_200_OK,
         )
 
+
 class GroupBalanceView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -679,6 +785,7 @@ class GroupDebtView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
 
 class PaymentCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]

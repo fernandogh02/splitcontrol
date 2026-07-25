@@ -6,6 +6,7 @@ from .models import (
     Expense,
     ExpenseDivision,
     Group,
+    GroupMembership,
     Payment,
 )
 
@@ -25,9 +26,53 @@ class UserSimpleSerializer(serializers.ModelSerializer):
         ]
 
     def get_nombre_completo(self, obj):
-        nombre = f"{obj.first_name} {obj.last_name}".strip()
+        nombre = (
+            f"{obj.first_name} {obj.last_name}"
+        ).strip()
 
         return nombre if nombre else obj.username
+
+
+class GroupMembershipSerializer(
+    serializers.ModelSerializer
+):
+    grupo_id = serializers.IntegerField(
+        source="grupo.id",
+        read_only=True,
+    )
+
+    grupo_nombre = serializers.CharField(
+        source="grupo.nombre",
+        read_only=True,
+    )
+
+    usuario = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    estado = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GroupMembership
+        fields = [
+            "id",
+            "grupo_id",
+            "grupo_nombre",
+            "usuario",
+            "fecha_ingreso",
+            "fecha_salida",
+            "activo",
+            "estado",
+        ]
+
+        read_only_fields = fields
+
+    def get_estado(self, obj):
+        return (
+            "activo"
+            if obj.activo
+            else "retirado"
+        )
 
 
 class GroupSerializer(serializers.ModelSerializer):
@@ -90,12 +135,20 @@ class GroupSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         fecha_inicio = attrs.get(
             "fecha_inicio",
-            getattr(self.instance, "fecha_inicio", None),
+            getattr(
+                self.instance,
+                "fecha_inicio",
+                None,
+            ),
         )
 
         fecha_fin = attrs.get(
             "fecha_fin",
-            getattr(self.instance, "fecha_fin", None),
+            getattr(
+                self.instance,
+                "fecha_fin",
+                None,
+            ),
         )
 
         if self.instance is None:
@@ -103,7 +156,8 @@ class GroupSerializer(serializers.ModelSerializer):
 
             if not fecha_inicio:
                 errores["fecha_inicio"] = (
-                    "Debes establecer la fecha y hora de inicio."
+                    "Debes establecer la fecha y hora "
+                    "de inicio."
                 )
 
             if not fecha_fin:
@@ -113,7 +167,9 @@ class GroupSerializer(serializers.ModelSerializer):
                 )
 
             if errores:
-                raise serializers.ValidationError(errores)
+                raise serializers.ValidationError(
+                    errores
+                )
 
         if fecha_inicio and not fecha_fin:
             raise serializers.ValidationError({
@@ -126,7 +182,8 @@ class GroupSerializer(serializers.ModelSerializer):
         if fecha_fin and not fecha_inicio:
             raise serializers.ValidationError({
                 "fecha_inicio": (
-                    "Debes establecer la fecha y hora de inicio."
+                    "Debes establecer la fecha y hora "
+                    "de inicio."
                 )
             })
 
@@ -137,15 +194,18 @@ class GroupSerializer(serializers.ModelSerializer):
         ):
             raise serializers.ValidationError({
                 "fecha_fin": (
-                    "La fecha y hora de finalización debe ser "
-                    "posterior a la fecha y hora de inicio."
+                    "La fecha y hora de finalización "
+                    "debe ser posterior a la fecha "
+                    "y hora de inicio."
                 )
             })
 
         return attrs
 
 
-class ExpenseDivisionSerializer(serializers.ModelSerializer):
+class ExpenseDivisionSerializer(
+    serializers.ModelSerializer
+):
     participante = UserSimpleSerializer(
         read_only=True,
     )
@@ -168,10 +228,12 @@ class ExpenseSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
-    pagado_por_id = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(),
-        source="pagado_por",
-        write_only=True,
+    pagado_por_id = (
+        serializers.PrimaryKeyRelatedField(
+            queryset=User.objects.all(),
+            source="pagado_por",
+            write_only=True,
+        )
     )
 
     participantes = UserSimpleSerializer(
@@ -179,11 +241,13 @@ class ExpenseSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
-    participantes_ids = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(),
-        source="participantes",
-        many=True,
-        write_only=True,
+    participantes_ids = (
+        serializers.PrimaryKeyRelatedField(
+            queryset=User.objects.all(),
+            source="participantes",
+            many=True,
+            write_only=True,
+        )
     )
 
     divisiones = ExpenseDivisionSerializer(
@@ -227,22 +291,32 @@ class ExpenseSerializer(serializers.ModelSerializer):
 
         if not descripcion:
             raise serializers.ValidationError(
-                "La descripción del gasto es obligatoria."
+                "La descripción del gasto "
+                "es obligatoria."
             )
 
         return descripcion
 
-    def validate_participantes_ids(self, participantes):
+    def validate_participantes_ids(
+        self,
+        participantes,
+    ):
         if not participantes:
             raise serializers.ValidationError(
-                "Debe seleccionar al menos un participante."
+                "Debe seleccionar al menos "
+                "un participante."
             )
 
         participantes_sin_repetir = []
 
         for participante in participantes:
-            if participante not in participantes_sin_repetir:
-                participantes_sin_repetir.append(participante)
+            if (
+                participante
+                not in participantes_sin_repetir
+            ):
+                participantes_sin_repetir.append(
+                    participante
+                )
 
         return participantes_sin_repetir
 
@@ -251,10 +325,16 @@ class ExpenseSerializer(serializers.ModelSerializer):
 
         pagado_por = attrs.get(
             "pagado_por",
-            getattr(self.instance, "pagado_por", None),
+            getattr(
+                self.instance,
+                "pagado_por",
+                None,
+            ),
         )
 
-        participantes = attrs.get("participantes")
+        participantes = attrs.get(
+            "participantes"
+        )
 
         if participantes is None:
             if self.instance:
@@ -272,7 +352,8 @@ class ExpenseSerializer(serializers.ModelSerializer):
         if not pagado_por:
             raise serializers.ValidationError({
                 "pagado_por_id": (
-                    "Debe seleccionar quién pagó el gasto."
+                    "Debe seleccionar quién pagó "
+                    "el gasto."
                 )
             })
 
@@ -281,14 +362,16 @@ class ExpenseSerializer(serializers.ModelSerializer):
         ).exists():
             raise serializers.ValidationError({
                 "pagado_por_id": (
-                    "La persona que pagó debe pertenecer al grupo."
+                    "La persona que pagó debe "
+                    "pertenecer al grupo."
                 )
             })
 
         if not participantes:
             raise serializers.ValidationError({
                 "participantes_ids": (
-                    "Debe seleccionar al menos un participante."
+                    "Debe seleccionar al menos "
+                    "un participante."
                 )
             })
 
@@ -303,8 +386,9 @@ class ExpenseSerializer(serializers.ModelSerializer):
         if participantes_invalidos:
             raise serializers.ValidationError({
                 "participantes_ids": (
-                    "Todos los participantes seleccionados "
-                    "deben pertenecer al grupo."
+                    "Todos los participantes "
+                    "seleccionados deben pertenecer "
+                    "al grupo."
                 )
             })
 
@@ -312,14 +396,20 @@ class ExpenseSerializer(serializers.ModelSerializer):
 
     @transaction.atomic
     def create(self, validated_data):
-        gasto = super().create(validated_data)
+        gasto = super().create(
+            validated_data
+        )
 
         gasto.calcular_division_equitativa()
 
         return gasto
 
     @transaction.atomic
-    def update(self, instance, validated_data):
+    def update(
+        self,
+        instance,
+        validated_data,
+    ):
         gasto = super().update(
             instance,
             validated_data,
@@ -330,25 +420,31 @@ class ExpenseSerializer(serializers.ModelSerializer):
         return gasto
 
 
-class PaymentSerializer(serializers.ModelSerializer):
+class PaymentSerializer(
+    serializers.ModelSerializer
+):
     pagador = UserSimpleSerializer(
         read_only=True,
     )
 
-    pagador_id = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(),
-        source="pagador",
-        write_only=True,
+    pagador_id = (
+        serializers.PrimaryKeyRelatedField(
+            queryset=User.objects.all(),
+            source="pagador",
+            write_only=True,
+        )
     )
 
     receptor = UserSimpleSerializer(
         read_only=True,
     )
 
-    receptor_id = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(),
-        source="receptor",
-        write_only=True,
+    receptor_id = (
+        serializers.PrimaryKeyRelatedField(
+            queryset=User.objects.all(),
+            source="receptor",
+            write_only=True,
+        )
     )
 
     registrado_por = UserSimpleSerializer(
@@ -384,12 +480,20 @@ class PaymentSerializer(serializers.ModelSerializer):
 
         pagador = attrs.get(
             "pagador",
-            getattr(self.instance, "pagador", None),
+            getattr(
+                self.instance,
+                "pagador",
+                None,
+            ),
         )
 
         receptor = attrs.get(
             "receptor",
-            getattr(self.instance, "receptor", None),
+            getattr(
+                self.instance,
+                "receptor",
+                None,
+            ),
         )
 
         if not grupo:
@@ -400,22 +504,24 @@ class PaymentSerializer(serializers.ModelSerializer):
         if not pagador:
             raise serializers.ValidationError({
                 "pagador_id": (
-                    "Debe seleccionar quién realiza el pago."
+                    "Debe seleccionar quién "
+                    "realiza el pago."
                 )
             })
 
         if not receptor:
             raise serializers.ValidationError({
                 "receptor_id": (
-                    "Debe seleccionar quién recibe el pago."
+                    "Debe seleccionar quién "
+                    "recibe el pago."
                 )
             })
 
         if pagador.id == receptor.id:
             raise serializers.ValidationError({
                 "receptor_id": (
-                    "El pagador y el receptor deben ser "
-                    "personas diferentes."
+                    "El pagador y el receptor "
+                    "deben ser personas diferentes."
                 )
             })
 
@@ -424,7 +530,8 @@ class PaymentSerializer(serializers.ModelSerializer):
         ).exists():
             raise serializers.ValidationError({
                 "pagador_id": (
-                    "La persona que paga debe pertenecer al grupo."
+                    "La persona que paga debe "
+                    "pertenecer al grupo."
                 )
             })
 
@@ -433,7 +540,8 @@ class PaymentSerializer(serializers.ModelSerializer):
         ).exists():
             raise serializers.ValidationError({
                 "receptor_id": (
-                    "La persona que recibe debe pertenecer al grupo."
+                    "La persona que recibe debe "
+                    "pertenecer al grupo."
                 )
             })
 

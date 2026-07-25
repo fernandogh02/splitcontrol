@@ -8,6 +8,7 @@ from .views import (
     GroupDebtView,
     GroupDetailView,
     GroupListCreateView,
+    GroupMembershipHistoryView,
     PaymentCreateView,
     RemoveParticipantView,
     UserListView,
@@ -45,6 +46,11 @@ urlpatterns = [
         "grupos/<int:pk>/participantes/<int:usuario_id>/",
         RemoveParticipantView.as_view(),
         name="eliminar_participante",
+    ),
+    path(
+        "grupos/<int:pk>/membresias/",
+        GroupMembershipHistoryView.as_view(),
+        name="historial_membresias_grupo",
     ),
     path(
         "grupos/<int:pk>/gastos/",
