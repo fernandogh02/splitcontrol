@@ -59,6 +59,73 @@ const formatearFechaHora = (fecha) => {
   return new Date(fecha).toLocaleString("es-EC");
 };
 
+const convertirFechaISOAInput = (fecha) => {
+  if (!fecha) {
+    return "";
+  }
+
+  const fechaConvertida = new Date(fecha);
+
+  if (Number.isNaN(fechaConvertida.getTime())) {
+    return "";
+  }
+
+  const diferenciaZonaHoraria =
+    fechaConvertida.getTimezoneOffset() * 60000;
+
+  return new Date(
+    fechaConvertida.getTime() - diferenciaZonaHoraria
+  )
+    .toISOString()
+    .slice(0, 16);
+};
+
+const convertirFechaLocalAISO = (fecha) => {
+  if (!fecha) {
+    return null;
+  }
+
+  const fechaConvertida = new Date(fecha);
+
+  if (Number.isNaN(fechaConvertida.getTime())) {
+    return null;
+  }
+
+  return fechaConvertida.toISOString();
+};
+
+const obtenerConfiguracionEstadoActividad = (estado) => {
+  if (estado === "programada") {
+    return {
+      texto: "Programada",
+      clase: "bg-info text-dark",
+      descripcion: "La actividad todavía no ha comenzado.",
+    };
+  }
+
+  if (estado === "activa") {
+    return {
+      texto: "Activa",
+      clase: "bg-success",
+      descripcion: "La actividad se encuentra dentro de su vigencia.",
+    };
+  }
+
+  if (estado === "cerrada") {
+    return {
+      texto: "Cerrada",
+      clase: "bg-secondary",
+      descripcion: "La fecha de finalización ya terminó.",
+    };
+  }
+
+  return {
+    texto: "Sin configurar",
+    clase: "bg-warning text-dark",
+    descripcion: "La actividad todavía no tiene una vigencia definida.",
+  };
+};
+
 function GroupDetail() {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -122,6 +189,8 @@ function GroupDetail() {
   const [formData, setFormData] = useState({
     nombre: "",
     descripcion: "",
+    fecha_inicio: "",
+    fecha_fin: "",
   });
 
   const [cargando, setCargando] = useState(true);
@@ -223,6 +292,12 @@ function GroupDetail() {
         setFormData({
           nombre: data.nombre || "",
           descripcion: data.descripcion || "",
+          fecha_inicio: convertirFechaISOAInput(
+            data.fecha_inicio
+          ),
+          fecha_fin: convertirFechaISOAInput(
+            data.fecha_fin
+          ),
         });
       } catch {
         setError("No se pudo cargar la información del grupo.");
@@ -871,6 +946,46 @@ function GroupDetail() {
     setMensaje("");
     setError("");
 
+    if (!formData.nombre.trim()) {
+      setError("Escribe un nombre para la actividad.");
+      return;
+    }
+
+    if (!formData.fecha_inicio) {
+      setError("Selecciona la fecha y hora de inicio.");
+      return;
+    }
+
+    if (!formData.fecha_fin) {
+      setError(
+        "Selecciona la fecha y hora de finalización."
+      );
+      return;
+    }
+
+    const fechaInicio = new Date(
+      formData.fecha_inicio
+    );
+
+    const fechaFin = new Date(
+      formData.fecha_fin
+    );
+
+    if (
+      Number.isNaN(fechaInicio.getTime()) ||
+      Number.isNaN(fechaFin.getTime())
+    ) {
+      setError("Las fechas ingresadas no son válidas.");
+      return;
+    }
+
+    if (fechaFin <= fechaInicio) {
+      setError(
+        "La fecha y hora de finalización debe ser posterior al inicio."
+      );
+      return;
+    }
+
     const token = localStorage.getItem("access");
 
     if (!token) {
@@ -890,29 +1005,55 @@ function GroupDetail() {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            nombre: formData.nombre,
-            descripcion: formData.descripcion,
+            nombre: formData.nombre.trim(),
+            descripcion: formData.descripcion.trim(),
+            fecha_inicio: convertirFechaLocalAISO(
+              formData.fecha_inicio
+            ),
+            fecha_fin: convertirFechaLocalAISO(
+              formData.fecha_fin
+            ),
           }),
         }
       );
 
-      if (!response.ok) {
-        throw new Error("No se pudo actualizar el grupo.");
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
       }
 
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          obtenerMensajeError(
+            data,
+            "No se pudo actualizar la actividad."
+          )
+        );
+      }
 
       setGrupo(data);
 
       setFormData({
         nombre: data.nombre || "",
         descripcion: data.descripcion || "",
+        fecha_inicio: convertirFechaISOAInput(
+          data.fecha_inicio
+        ),
+        fecha_fin: convertirFechaISOAInput(
+          data.fecha_fin
+        ),
       });
 
       setModoEdicion(false);
-      setMensaje("Grupo actualizado correctamente.");
-    } catch {
-      setError("No se pudo actualizar el grupo. Intenta nuevamente.");
+      setMensaje("Actividad actualizada correctamente.");
+    } catch (errorActualizacion) {
+      setError(
+        errorActualizacion.message ||
+          "No se pudo actualizar la actividad."
+      );
     } finally {
       setGuardando(false);
     }
@@ -922,6 +1063,12 @@ function GroupDetail() {
     setFormData({
       nombre: grupo?.nombre || "",
       descripcion: grupo?.descripcion || "",
+      fecha_inicio: convertirFechaISOAInput(
+        grupo?.fecha_inicio
+      ),
+      fecha_fin: convertirFechaISOAInput(
+        grupo?.fecha_fin
+      ),
     });
 
     setModoEdicion(false);
@@ -1350,7 +1497,7 @@ function GroupDetail() {
 
           <span>›</span>
 
-          <strong>Detalle del grupo</strong>
+          <strong>Detalle de la actividad</strong>
         </div>
 
         {cargando ? (
@@ -1374,11 +1521,27 @@ function GroupDetail() {
         ) : (
           <>
             <header className="create-group-header">
-              <h1>{grupo.nombre}</h1>
+              <div className="d-flex align-items-center flex-wrap gap-3">
+                <h1 className="mb-0">{grupo.nombre}</h1>
 
-              <p>
-                Revisa y administra la información general del
-                grupo.
+                <span
+                  className={`badge ${
+                    obtenerConfiguracionEstadoActividad(
+                      grupo.estado
+                    ).clase
+                  }`}
+                >
+                  {
+                    obtenerConfiguracionEstadoActividad(
+                      grupo.estado
+                    ).texto
+                  }
+                </span>
+              </div>
+
+              <p className="mt-2">
+                Revisa y administra la información general de
+                la actividad.
               </p>
             </header>
 
@@ -1386,7 +1549,7 @@ function GroupDetail() {
               <div className="create-group-card">
                 <div className="d-flex justify-content-between align-items-center mb-3">
                   <h4 className="mb-0">
-                    Información del grupo
+                    Información de la actividad
                   </h4>
 
                   {!modoEdicion && (
@@ -1436,7 +1599,7 @@ function GroupDetail() {
                   <form onSubmit={guardarCambios}>
                     <div className="mt-4">
                       <label className="form-label">
-                        Nombre del grupo
+                        Nombre de la actividad
                       </label>
 
                       <input
@@ -1460,8 +1623,50 @@ function GroupDetail() {
                         rows="5"
                         value={formData.descripcion}
                         onChange={handleChange}
-                        required
                       />
+                    </div>
+
+                    <div className="row mt-1">
+                      <div className="col-md-6 mt-3">
+                        <label className="form-label">
+                          Fecha y hora de inicio
+                        </label>
+
+                        <input
+                          type="datetime-local"
+                          name="fecha_inicio"
+                          className="form-control"
+                          value={formData.fecha_inicio}
+                          onChange={handleChange}
+                          disabled={guardando}
+                          required
+                        />
+                      </div>
+
+                      <div className="col-md-6 mt-3">
+                        <label className="form-label">
+                          Fecha y hora de finalización
+                        </label>
+
+                        <input
+                          type="datetime-local"
+                          name="fecha_fin"
+                          className="form-control"
+                          value={formData.fecha_fin}
+                          onChange={handleChange}
+                          min={formData.fecha_inicio || undefined}
+                          disabled={guardando}
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <div
+                      className="alert alert-light border mt-3 mb-0"
+                      role="alert"
+                    >
+                      El estado se actualizará automáticamente
+                      según estas fechas.
                     </div>
 
                     <div className="create-group-footer mt-4">
@@ -1496,7 +1701,7 @@ function GroupDetail() {
                   <>
                     <div className="mt-4">
                       <label className="form-label">
-                        Nombre del grupo
+                        Nombre de la actividad
                       </label>
 
                       <div className="form-control bg-light">
@@ -1514,6 +1719,64 @@ function GroupDetail() {
                         style={{ minHeight: "110px" }}
                       >
                         {grupo.descripcion || "Sin descripción"}
+                      </div>
+                    </div>
+
+                    <div className="row mt-1">
+                      <div className="col-md-6 mt-3">
+                        <label className="form-label">
+                          Inicio de la actividad
+                        </label>
+
+                        <div className="form-control bg-light">
+                          {formatearFechaHora(
+                            grupo.fecha_inicio
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="col-md-6 mt-3">
+                        <label className="form-label">
+                          Finalización de la actividad
+                        </label>
+
+                        <div className="form-control bg-light">
+                          {formatearFechaHora(
+                            grupo.fecha_fin
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3">
+                      <label className="form-label">
+                        Estado de la actividad
+                      </label>
+
+                      <div className="border rounded p-3 bg-light">
+                        <div className="d-flex justify-content-between align-items-center gap-3">
+                          <span>
+                            {
+                              obtenerConfiguracionEstadoActividad(
+                                grupo.estado
+                              ).descripcion
+                            }
+                          </span>
+
+                          <span
+                            className={`badge ${
+                              obtenerConfiguracionEstadoActividad(
+                                grupo.estado
+                              ).clase
+                            }`}
+                          >
+                            {
+                              obtenerConfiguracionEstadoActividad(
+                                grupo.estado
+                              ).texto
+                            }
+                          </span>
+                        </div>
                       </div>
                     </div>
 

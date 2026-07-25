@@ -1,6 +1,9 @@
+from datetime import timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -829,3 +832,253 @@ class RegistroPagoTest(APITestCase):
             Payment.objects.count(),
             0,
         )
+
+
+class VigenciaEstadoActividadTest(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc43_v2",
+            email="fernando_sc43_v2@example.com",
+            password="Prueba123",
+        )
+
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+        self.url = "/api/grupos/"
+
+    def test_crear_actividad_con_vigencia_valida(self):
+        fecha_inicio = timezone.now() + timedelta(days=1)
+        fecha_fin = fecha_inicio + timedelta(days=4)
+
+        response = self.client.post(
+            self.url,
+            {
+                "nombre": "Viaje a la playa",
+                "descripcion": "Actividad entre amigos",
+                "fecha_inicio": fecha_inicio.isoformat(),
+                "fecha_fin": fecha_fin.isoformat(),
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        self.assertEqual(
+            response.data["nombre"],
+            "Viaje a la playa",
+        )
+
+        self.assertEqual(
+            response.data["estado"],
+            Group.ESTADO_PROGRAMADA,
+        )
+
+        grupo = Group.objects.get(
+            id=response.data["id"]
+        )
+
+        self.assertEqual(
+            grupo.creador,
+            self.fernando,
+        )
+
+        self.assertTrue(
+            grupo.participantes.filter(
+                id=self.fernando.id
+            ).exists()
+        )
+
+        self.assertIsNotNone(
+            grupo.fecha_inicio
+        )
+
+        self.assertIsNotNone(
+            grupo.fecha_fin
+        )
+
+    def test_crear_actividad_exige_fecha_inicio_y_fin(self):
+        response = self.client.post(
+            self.url,
+            {
+                "nombre": "Actividad sin vigencia",
+                "descripcion": "No debe crearse",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "fecha_inicio",
+            response.data,
+        )
+
+        self.assertIn(
+            "fecha_fin",
+            response.data,
+        )
+
+        self.assertFalse(
+            Group.objects.filter(
+                nombre="Actividad sin vigencia"
+            ).exists()
+        )
+
+    def test_fecha_fin_debe_ser_posterior_a_fecha_inicio(self):
+        fecha_inicio = timezone.now() + timedelta(days=2)
+        fecha_fin = fecha_inicio - timedelta(hours=1)
+
+        response = self.client.post(
+            self.url,
+            {
+                "nombre": "Actividad inválida",
+                "descripcion": "Fechas incorrectas",
+                "fecha_inicio": fecha_inicio.isoformat(),
+                "fecha_fin": fecha_fin.isoformat(),
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "fecha_fin",
+            response.data,
+        )
+
+        self.assertFalse(
+            Group.objects.filter(
+                nombre="Actividad inválida"
+            ).exists()
+        )
+
+    def test_estado_no_se_puede_modificar_manualmente(self):
+        fecha_inicio = timezone.now() + timedelta(days=1)
+        fecha_fin = fecha_inicio + timedelta(days=2)
+
+        response = self.client.post(
+            self.url,
+            {
+                "nombre": "Actividad programada",
+                "descripcion": "Estado calculado",
+                "fecha_inicio": fecha_inicio.isoformat(),
+                "fecha_fin": fecha_fin.isoformat(),
+                "estado": Group.ESTADO_CERRADA,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        self.assertEqual(
+            response.data["estado"],
+            Group.ESTADO_PROGRAMADA,
+        )
+
+        grupo = Group.objects.get(
+            id=response.data["id"]
+        )
+
+        response_patch = self.client.patch(
+            f"/api/grupos/{grupo.id}/",
+            {
+                "estado": Group.ESTADO_CERRADA,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_patch.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response_patch.data["estado"],
+            Group.ESTADO_PROGRAMADA,
+        )
+
+    def test_grupo_antiguo_sin_fechas_queda_sin_configurar(self):
+        grupo = Group.objects.create(
+            nombre="Grupo antiguo",
+            descripcion="Creado antes de SC-43 V2",
+            creador=self.fernando,
+        )
+
+        grupo.participantes.add(
+            self.fernando
+        )
+
+        response = self.client.get(
+            f"/api/grupos/{grupo.id}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertIsNone(
+            response.data["fecha_inicio"]
+        )
+
+        self.assertIsNone(
+            response.data["fecha_fin"]
+        )
+
+        self.assertEqual(
+            response.data["estado"],
+            Group.ESTADO_SIN_CONFIGURAR,
+        )
+
+    def test_estado_programada_activa_y_cerrada(self):
+        momento_base = timezone.now()
+
+        grupo = Group.objects.create(
+            nombre="Estados de actividad",
+            descripcion="Prueba de estados automáticos",
+            creador=self.fernando,
+            fecha_inicio=momento_base + timedelta(hours=1),
+            fecha_fin=momento_base + timedelta(hours=5),
+        )
+
+        with patch(
+            "expenses.models.timezone.now",
+            return_value=momento_base,
+        ):
+            self.assertEqual(
+                grupo.estado,
+                Group.ESTADO_PROGRAMADA,
+            )
+
+        with patch(
+            "expenses.models.timezone.now",
+            return_value=momento_base + timedelta(hours=2),
+        ):
+            self.assertEqual(
+                grupo.estado,
+                Group.ESTADO_ACTIVA,
+            )
+
+        with patch(
+            "expenses.models.timezone.now",
+            return_value=momento_base + timedelta(hours=6),
+        ):
+            self.assertEqual(
+                grupo.estado,
+                Group.ESTADO_CERRADA,
+            )
