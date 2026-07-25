@@ -427,12 +427,9 @@ class PaymentSerializer(
         read_only=True,
     )
 
-    pagador_id = (
-        serializers.PrimaryKeyRelatedField(
-            queryset=User.objects.all(),
-            source="pagador",
-            write_only=True,
-        )
+    pagador_id = serializers.IntegerField(
+        source="pagador.id",
+        read_only=True,
     )
 
     receptor = UserSimpleSerializer(
@@ -470,6 +467,7 @@ class PaymentSerializer(
             "id",
             "grupo",
             "pagador",
+            "pagador_id",
             "receptor",
             "registrado_por",
             "fecha_registro",
@@ -477,14 +475,11 @@ class PaymentSerializer(
 
     def validate(self, attrs):
         grupo = self.context.get("grupo")
-
-        pagador = attrs.get(
-            "pagador",
-            getattr(
-                self.instance,
-                "pagador",
-                None,
-            ),
+        request = self.context.get("request")
+        pagador = (
+            request.user
+            if request and request.user.is_authenticated
+            else None
         )
 
         receptor = attrs.get(
@@ -502,10 +497,17 @@ class PaymentSerializer(
             )
 
         if not pagador:
+            raise serializers.ValidationError(
+                "No se pudo identificar al usuario que realiza el pago."
+            )
+
+        if not grupo.participantes.filter(
+            id=pagador.id
+        ).exists():
             raise serializers.ValidationError({
-                "pagador_id": (
-                    "Debe seleccionar quién "
-                    "realiza el pago."
+                "pagador": (
+                    "Solo un integrante activo puede "
+                    "registrar su propio pago."
                 )
             })
 
@@ -526,22 +528,12 @@ class PaymentSerializer(
             })
 
         if not grupo.participantes.filter(
-            id=pagador.id
-        ).exists():
-            raise serializers.ValidationError({
-                "pagador_id": (
-                    "La persona que paga debe "
-                    "pertenecer al grupo."
-                )
-            })
-
-        if not grupo.participantes.filter(
             id=receptor.id
         ).exists():
             raise serializers.ValidationError({
                 "receptor_id": (
                     "La persona que recibe debe "
-                    "pertenecer al grupo."
+                    "pertenecer actualmente al grupo."
                 )
             })
 

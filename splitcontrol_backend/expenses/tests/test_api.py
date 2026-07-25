@@ -589,32 +589,32 @@ class RegistroPagoTest(APITestCase):
 
     def setUp(self):
         self.fernando = User.objects.create_user(
-            username="fernando_sc43",
-            email="fernando_sc43@example.com",
+            username="fernando_sc46_pago",
+            email="fernando_sc46_pago@example.com",
             password="Prueba123",
         )
 
         self.carlita = User.objects.create_user(
-            username="carlita_sc43",
-            email="carlita_sc43@example.com",
+            username="carlita_sc46_pago",
+            email="carlita_sc46_pago@example.com",
             password="Prueba123",
         )
 
         self.damarys = User.objects.create_user(
-            username="damarys_sc43",
-            email="damarys_sc43@example.com",
+            username="damarys_sc46_pago",
+            email="damarys_sc46_pago@example.com",
             password="Prueba123",
         )
 
         self.usuario_externo = User.objects.create_user(
-            username="externo_sc43",
-            email="externo_sc43@example.com",
+            username="externo_sc46_pago",
+            email="externo_sc46_pago@example.com",
             password="Prueba123",
         )
 
         self.grupo = Group.objects.create(
-            nombre="Grupo SC-43",
-            descripcion="Pruebas para registrar pagos",
+            nombre="Grupo pagos SC-46",
+            descripcion="Pruebas de pagos propios",
             creador=self.fernando,
         )
 
@@ -622,6 +622,21 @@ class RegistroPagoTest(APITestCase):
             self.fernando,
             self.carlita,
             self.damarys,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.fernando,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.damarys,
         )
 
         self.url = (
@@ -632,12 +647,11 @@ class RegistroPagoTest(APITestCase):
             user=self.fernando
         )
 
-    def test_registrar_pago_correctamente(self):
+    def test_registrar_pago_propio_correctamente(self):
         response = self.client.post(
             self.url,
             {
-                "pagador_id": self.carlita.id,
-                "receptor_id": self.fernando.id,
+                "receptor_id": self.carlita.id,
                 "monto": "15.50",
                 "fecha_pago": "2026-07-25",
             },
@@ -668,12 +682,12 @@ class RegistroPagoTest(APITestCase):
 
         self.assertEqual(
             pago.pagador,
-            self.carlita,
+            self.fernando,
         )
 
         self.assertEqual(
             pago.receptor,
-            self.fernando,
+            self.carlita,
         )
 
         self.assertEqual(
@@ -688,20 +702,48 @@ class RegistroPagoTest(APITestCase):
 
         self.assertEqual(
             response.data["pago"]["pagador"]["username"],
-            "carlita_sc43",
+            "fernando_sc46_pago",
         )
 
         self.assertEqual(
             response.data["pago"]["receptor"]["username"],
-            "fernando_sc43",
+            "carlita_sc46_pago",
+        )
+
+    def test_pagador_id_enviado_manualmente_es_ignorado(self):
+        response = self.client.post(
+            self.url,
+            {
+                "pagador_id": self.damarys.id,
+                "receptor_id": self.carlita.id,
+                "monto": "8.00",
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        pago = Payment.objects.get()
+
+        self.assertEqual(
+            pago.pagador,
+            self.fernando,
+        )
+
+        self.assertNotEqual(
+            pago.pagador,
+            self.damarys,
         )
 
     def test_no_permite_pago_a_la_misma_persona(self):
         response = self.client.post(
             self.url,
             {
-                "pagador_id": self.carlita.id,
-                "receptor_id": self.carlita.id,
+                "receptor_id": self.fernando.id,
                 "monto": "10.00",
                 "fecha_pago": "2026-07-25",
             },
@@ -723,38 +765,10 @@ class RegistroPagoTest(APITestCase):
             0,
         )
 
-    def test_pagador_debe_pertenecer_al_grupo(self):
-        response = self.client.post(
-            self.url,
-            {
-                "pagador_id": self.usuario_externo.id,
-                "receptor_id": self.fernando.id,
-                "monto": "10.00",
-                "fecha_pago": "2026-07-25",
-            },
-            format="json",
-        )
-
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_400_BAD_REQUEST,
-        )
-
-        self.assertIn(
-            "pagador_id",
-            response.data,
-        )
-
-        self.assertEqual(
-            Payment.objects.count(),
-            0,
-        )
-
     def test_receptor_debe_pertenecer_al_grupo(self):
         response = self.client.post(
             self.url,
             {
-                "pagador_id": self.carlita.id,
                 "receptor_id": self.usuario_externo.id,
                 "monto": "10.00",
                 "fecha_pago": "2026-07-25",
@@ -781,8 +795,7 @@ class RegistroPagoTest(APITestCase):
         response = self.client.post(
             self.url,
             {
-                "pagador_id": self.carlita.id,
-                "receptor_id": self.fernando.id,
+                "receptor_id": self.carlita.id,
                 "monto": "0.00",
                 "fecha_pago": "2026-07-25",
             },
@@ -804,7 +817,7 @@ class RegistroPagoTest(APITestCase):
             0,
         )
 
-    def test_usuario_no_creador_no_puede_registrar_pago(self):
+    def test_participante_activo_puede_registrar_su_pago(self):
         self.client.force_authenticate(
             user=self.carlita
         )
@@ -812,7 +825,38 @@ class RegistroPagoTest(APITestCase):
         response = self.client.post(
             self.url,
             {
-                "pagador_id": self.carlita.id,
+                "receptor_id": self.fernando.id,
+                "monto": "10.00",
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        pago = Payment.objects.get()
+
+        self.assertEqual(
+            pago.pagador,
+            self.carlita,
+        )
+
+        self.assertEqual(
+            pago.registrado_por,
+            self.carlita,
+        )
+
+    def test_usuario_externo_no_puede_registrar_pago(self):
+        self.client.force_authenticate(
+            user=self.usuario_externo
+        )
+
+        response = self.client.post(
+            self.url,
+            {
                 "receptor_id": self.fernando.id,
                 "monto": "10.00",
                 "fecha_pago": "2026-07-25",
@@ -823,14 +867,6 @@ class RegistroPagoTest(APITestCase):
         self.assertEqual(
             response.status_code,
             status.HTTP_404_NOT_FOUND,
-        )
-
-        self.assertEqual(
-            response.data["error"],
-            (
-                "Grupo no encontrado o no tienes permiso "
-                "para registrar pagos."
-            ),
         )
 
         self.assertEqual(
@@ -1859,7 +1895,7 @@ class ConsultaActividadesCompartidasTest(APITestCase):
             self.membresia_carlita.activo
         )
 
-    def test_participante_activo_no_puede_registrar_gastos_ni_pagos(self):
+    def test_participante_activo_puede_registrar_gastos_y_pagos(self):
         self.client.force_authenticate(
             user=self.carlita
         )
@@ -1867,7 +1903,7 @@ class ConsultaActividadesCompartidasTest(APITestCase):
         response_gasto = self.client.post(
             f"/api/grupos/{self.grupo.id}/gastos/",
             {
-                "descripcion": "Gasto no autorizado",
+                "descripcion": "Gasto del participante",
                 "monto": "10.00",
                 "fecha_gasto": "2026-07-25",
                 "pagado_por_id": self.carlita.id,
@@ -1881,13 +1917,12 @@ class ConsultaActividadesCompartidasTest(APITestCase):
 
         self.assertEqual(
             response_gasto.status_code,
-            status.HTTP_404_NOT_FOUND,
+            status.HTTP_201_CREATED,
         )
 
         response_pago = self.client.post(
             f"/api/grupos/{self.grupo.id}/pagos/",
             {
-                "pagador_id": self.carlita.id,
                 "receptor_id": self.fernando.id,
                 "monto": "5.00",
                 "fecha_pago": "2026-07-25",
@@ -1897,20 +1932,375 @@ class ConsultaActividadesCompartidasTest(APITestCase):
 
         self.assertEqual(
             response_pago.status_code,
-            status.HTTP_404_NOT_FOUND,
+            status.HTTP_201_CREATED,
         )
 
-        self.assertFalse(
-            Expense.objects.filter(
-                grupo=self.grupo,
-                descripcion="Gasto no autorizado",
+        gasto = Expense.objects.get(
+            grupo=self.grupo,
+            descripcion="Gasto del participante",
+        )
+
+        self.assertEqual(
+            gasto.registrado_por,
+            self.carlita,
+        )
+
+        pago = Payment.objects.get(
+            grupo=self.grupo,
+            receptor=self.fernando,
+        )
+
+        self.assertEqual(
+            pago.pagador,
+            self.carlita,
+        )
+
+        self.assertEqual(
+            pago.registrado_por,
+            self.carlita,
+        )
+
+
+class PermisosSegunRolEstadoTest(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc46",
+            email="fernando_sc46@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc46",
+            email="carlita_sc46@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc46",
+            email="damarys_sc46@example.com",
+            password="Prueba123",
+        )
+
+        self.usuario_externo = User.objects.create_user(
+            username="externo_sc46",
+            email="externo_sc46@example.com",
+            password="Prueba123",
+        )
+
+        self.nuevo_usuario = User.objects.create_user(
+            username="nuevo_sc46",
+            email="nuevo_sc46@example.com",
+            password="Prueba123",
+        )
+
+        ahora = timezone.now()
+
+        self.grupo_activo = Group.objects.create(
+            nombre="Actividad activa SC-46",
+            descripcion="Actividad con operaciones habilitadas",
+            creador=self.fernando,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
+        )
+
+        self.grupo_activo.participantes.add(
+            self.fernando,
+            self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo_activo,
+            usuario=self.fernando,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo_activo,
+            usuario=self.carlita,
+        )
+
+        membresia_retirada = GroupMembership.objects.create(
+            grupo=self.grupo_activo,
+            usuario=self.damarys,
+        )
+        membresia_retirada.retirar()
+
+        self.grupo_cerrado = Group.objects.create(
+            nombre="Actividad cerrada SC-46",
+            descripcion="Actividad sin nuevas operaciones",
+            creador=self.fernando,
+            fecha_inicio=ahora - timedelta(days=3),
+            fecha_fin=ahora - timedelta(days=1),
+        )
+
+        self.grupo_cerrado.participantes.add(
+            self.fernando,
+            self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo_cerrado,
+            usuario=self.fernando,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo_cerrado,
+            usuario=self.carlita,
+        )
+
+        self.gasto_cerrado = Expense.objects.create(
+            grupo=self.grupo_cerrado,
+            descripcion="Gasto histórico cerrado",
+            monto=Decimal("20.00"),
+            pagado_por=self.fernando,
+            registrado_por=self.fernando,
+        )
+
+        self.gasto_cerrado.participantes.add(
+            self.fernando,
+            self.carlita,
+        )
+        self.gasto_cerrado.calcular_division_equitativa()
+
+    def test_retirado_y_externo_no_pueden_registrar_operaciones(self):
+        for usuario in [
+            self.damarys,
+            self.usuario_externo,
+        ]:
+            self.client.force_authenticate(
+                user=usuario
+            )
+
+            response_gasto = self.client.post(
+                f"/api/grupos/{self.grupo_activo.id}/gastos/",
+                {
+                    "descripcion": "Operación no autorizada",
+                    "monto": "10.00",
+                    "fecha_gasto": "2026-07-25",
+                    "pagado_por_id": usuario.id,
+                    "participantes_ids": [
+                        self.fernando.id,
+                        self.carlita.id,
+                    ],
+                },
+                format="json",
+            )
+
+            self.assertEqual(
+                response_gasto.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
+
+            response_pago = self.client.post(
+                f"/api/grupos/{self.grupo_activo.id}/pagos/",
+                {
+                    "receptor_id": self.fernando.id,
+                    "monto": "5.00",
+                    "fecha_pago": "2026-07-25",
+                },
+                format="json",
+            )
+
+            self.assertEqual(
+                response_pago.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
+
+    def test_grupo_cerrado_no_permite_registrar_gastos_ni_pagos(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response_gasto = self.client.post(
+            f"/api/grupos/{self.grupo_cerrado.id}/gastos/",
+            {
+                "descripcion": "Gasto posterior al cierre",
+                "monto": "10.00",
+                "fecha_gasto": "2026-07-25",
+                "pagado_por_id": self.carlita.id,
+                "participantes_ids": [
+                    self.fernando.id,
+                    self.carlita.id,
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_gasto.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response_gasto.data["error"],
+            (
+                "No se pueden registrar gastos porque "
+                "la actividad está cerrada."
+            ),
+        )
+
+        response_pago = self.client.post(
+            f"/api/grupos/{self.grupo_cerrado.id}/pagos/",
+            {
+                "receptor_id": self.fernando.id,
+                "monto": "5.00",
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_pago.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response_pago.data["error"],
+            (
+                "No se pueden registrar pagos porque "
+                "la actividad está cerrada."
+            ),
+        )
+
+    def test_grupo_cerrado_no_permite_cambios_de_participantes(self):
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+        response_agregar = self.client.post(
+            (
+                f"/api/grupos/{self.grupo_cerrado.id}/"
+                "participantes/"
+            ),
+            {
+                "usuario_id": self.nuevo_usuario.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_agregar.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        response_retirar = self.client.delete(
+            (
+                f"/api/grupos/{self.grupo_cerrado.id}/"
+                f"participantes/{self.carlita.id}/"
+            )
+        )
+
+        self.assertEqual(
+            response_retirar.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertTrue(
+            self.grupo_cerrado.participantes.filter(
+                id=self.carlita.id
             ).exists()
         )
 
         self.assertFalse(
-            Payment.objects.filter(
-                grupo=self.grupo,
-                pagador=self.carlita,
-                receptor=self.fernando,
+            self.grupo_cerrado.participantes.filter(
+                id=self.nuevo_usuario.id
+            ).exists()
+        )
+
+    def test_grupo_cerrado_no_permite_editar_ni_eliminar_gastos(self):
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+        response_patch = self.client.patch(
+            (
+                f"/api/grupos/{self.grupo_cerrado.id}/"
+                f"gastos/{self.gasto_cerrado.id}/"
+            ),
+            {
+                "monto": "30.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_patch.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        response_delete = self.client.delete(
+            (
+                f"/api/grupos/{self.grupo_cerrado.id}/"
+                f"gastos/{self.gasto_cerrado.id}/"
+            )
+        )
+
+        self.assertEqual(
+            response_delete.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.gasto_cerrado.refresh_from_db()
+
+        self.assertEqual(
+            self.gasto_cerrado.monto,
+            Decimal("20.00"),
+        )
+
+    def test_creador_puede_editar_datos_generales_de_grupo_cerrado(self):
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+        response = self.client.patch(
+            f"/api/grupos/{self.grupo_cerrado.id}/",
+            {
+                "nombre": "Actividad cerrada actualizada",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.grupo_cerrado.refresh_from_db()
+
+        self.assertEqual(
+            self.grupo_cerrado.nombre,
+            "Actividad cerrada actualizada",
+        )
+
+    def test_participante_no_puede_editar_ni_eliminar_grupo(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response_patch = self.client.patch(
+            f"/api/grupos/{self.grupo_activo.id}/",
+            {
+                "nombre": "Cambio no autorizado",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_patch.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        response_delete = self.client.delete(
+            f"/api/grupos/{self.grupo_activo.id}/"
+        )
+
+        self.assertEqual(
+            response_delete.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertTrue(
+            Group.objects.filter(
+                id=self.grupo_activo.id
             ).exists()
         )
