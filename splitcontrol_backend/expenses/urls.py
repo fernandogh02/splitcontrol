@@ -10,6 +10,9 @@ from .views import (
     GroupEconomicSummaryView,
     GroupListCreateView,
     GroupMembershipHistoryView,
+    NotificationListView,
+    NotificationMarkAllReadView,
+    NotificationMarkReadView,
     PaymentCreateView,
     PaymentDetailView,
     RemoveParticipantView,
@@ -88,5 +91,20 @@ urlpatterns = [
         "grupos/<int:grupo_id>/pagos/<int:pago_id>/",
         PaymentDetailView.as_view(),
         name="detalle_pago",
+    ),
+    path(
+        "notificaciones/",
+        NotificationListView.as_view(),
+        name="listar_notificaciones",
+    ),
+    path(
+        "notificaciones/marcar-todas-leidas/",
+        NotificationMarkAllReadView.as_view(),
+        name="marcar_todas_notificaciones_leidas",
+    ),
+    path(
+        "notificaciones/<int:notification_id>/leer/",
+        NotificationMarkReadView.as_view(),
+        name="marcar_notificacion_leida",
     ),
 ]

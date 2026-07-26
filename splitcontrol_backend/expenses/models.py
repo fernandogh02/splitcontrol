@@ -441,3 +441,98 @@ class Payment(models.Model):
             f"${self.monto} en "
             f"{self.grupo.nombre}"
         )
+
+
+class Notification(models.Model):
+    usuario = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="notificaciones",
+    )
+
+    titulo = models.CharField(
+        max_length=150,
+    )
+
+    mensaje = models.TextField()
+
+    enlace = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+    )
+
+    leida = models.BooleanField(
+        default=False,
+    )
+
+    fecha_creacion = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    fecha_lectura = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        ordering = [
+            "-fecha_creacion",
+            "-id",
+        ]
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "usuario",
+                    "leida",
+                    "-fecha_creacion",
+                ],
+                name="notif_usuario_estado_idx",
+            ),
+        ]
+
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        leida=False,
+                        fecha_lectura__isnull=True,
+                    )
+                    | models.Q(
+                        leida=True,
+                        fecha_lectura__isnull=False,
+                    )
+                ),
+                name="notificacion_lectura_fecha_consistente",
+            ),
+        ]
+
+    def __str__(self):
+        estado = (
+            "Leída"
+            if self.leida
+            else "No leída"
+        )
+
+        return (
+            f"{self.usuario.username} - "
+            f"{self.titulo} - "
+            f"{estado}"
+        )
+
+    def marcar_como_leida(self):
+        if self.leida:
+            return False
+
+        self.leida = True
+        self.fecha_lectura = timezone.now()
+
+        self.save(
+            update_fields=[
+                "leida",
+                "fecha_lectura",
+            ]
+        )
+
+        return True

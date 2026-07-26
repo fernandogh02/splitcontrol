@@ -4,6 +4,7 @@ import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import CreateGroup from "./pages/CreateGroup";
 import ExpenseSummary from "./pages/ExpenseSummary";
+import Notifications from "./pages/Notifications";
 import PrivateRoute from "./components/PrivateRoute";
 import GroupDetail from "./pages/GroupDetail";
 import "./App.css";
@@ -46,13 +47,26 @@ function App() {
 
         <Route
           path="/grupos/:id"
-           element={
-             <PrivateRoute>
-                <GroupDetail />
-              </PrivateRoute>
+          element={
+            <PrivateRoute>
+              <GroupDetail />
+            </PrivateRoute>
           }
         />
 
+        <Route
+          path="/notificaciones"
+          element={
+            <PrivateRoute>
+              <Notifications />
+            </PrivateRoute>
+          }
+        />
+
+        <Route
+          path="*"
+          element={<Navigate to="/dashboard" replace />}
+        />
       </Routes>
     </BrowserRouter>
   );
