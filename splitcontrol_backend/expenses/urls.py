@@ -11,6 +11,7 @@ from .views import (
     GroupListCreateView,
     GroupMembershipHistoryView,
     PaymentCreateView,
+    PaymentDetailView,
     RemoveParticipantView,
     UserListView,
     prueba_api,
@@ -81,6 +82,11 @@ urlpatterns = [
     path(
         "grupos/<int:pk>/pagos/",
         PaymentCreateView.as_view(),
-        name="registrar_pago",
+        name="listar_registrar_pagos",
+    ),
+    path(
+        "grupos/<int:grupo_id>/pagos/<int:pago_id>/",
+        PaymentDetailView.as_view(),
+        name="detalle_pago",
     ),
 ]

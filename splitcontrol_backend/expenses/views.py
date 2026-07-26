@@ -957,6 +957,60 @@ class GroupDebtView(APIView):
 class PaymentCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    def get(self, request, pk):
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar sus pagos."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        pagos = (
+            Payment.objects
+            .filter(grupo=grupo)
+            .select_related(
+                "grupo",
+                "pagador",
+                "registrado_por",
+            )
+            .order_by(
+                "-fecha_registro",
+                "-id",
+            )
+        )
+
+        total_registros = pagos.count()
+
+        mensaje = (
+            "Pagos consultados correctamente."
+            if total_registros > 0
+            else "Todavía no existen pagos registrados."
+        )
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "estado_actividad": grupo.estado,
+                "total_registros": total_registros,
+                "mensaje": mensaje,
+                "pagos": PaymentSerializer(
+                    pagos,
+                    many=True,
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
     def post(self, request, pk):
         grupo = obtener_grupo_visible_para_usuario(
             request.user,
@@ -1047,4 +1101,62 @@ class PaymentCreateView(APIView):
                 ).data,
             },
             status=status.HTTP_201_CREATED,
+        )
+
+
+class PaymentDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, grupo_id, pago_id):
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            grupo_id,
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar sus pagos."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        pago = (
+            Payment.objects
+            .filter(
+                id=pago_id,
+                grupo=grupo,
+            )
+            .select_related(
+                "grupo",
+                "pagador",
+                "registrado_por",
+            )
+            .first()
+        )
+
+        if not pago:
+            return Response(
+                {
+                    "error": (
+                        "El pago no existe o no pertenece "
+                        "a esta actividad."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "estado_actividad": grupo.estado,
+                "pago": PaymentSerializer(
+                    pago
+                ).data,
+            },
+            status=status.HTTP_200_OK,
         )
