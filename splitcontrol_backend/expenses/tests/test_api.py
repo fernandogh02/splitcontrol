@@ -8,6 +8,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from expenses.models import (
+    ActivityHistory,
     Expense,
     ExpenseDivision,
     Group,
@@ -5138,5 +5139,835 @@ class NotificarRegistroGastoSC55Test(APITestCase):
 
         self.assertFalse(
             notificacion["leida"]
+        )
+
+
+class HistorialActividadSC56Test(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc56",
+            email="fernando_sc56@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc56",
+            email="carlita_sc56@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc56",
+            email="damarys_sc56@example.com",
+            password="Prueba123",
+        )
+
+        self.retirado = User.objects.create_user(
+            username="retirado_sc56",
+            email="retirado_sc56@example.com",
+            password="Prueba123",
+        )
+
+        self.externo = User.objects.create_user(
+            username="externo_sc56",
+            email="externo_sc56@example.com",
+            password="Prueba123",
+        )
+
+        ahora = timezone.now()
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad SC-56",
+            descripcion="Prueba del historial general",
+            creador=self.fernando,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
+        )
+
+        self.grupo.participantes.add(
+            self.fernando,
+            self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.fernando,
+        )
+
+        self.membresia_carlita = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.carlita,
+            )
+        )
+
+        self.membresia_retirada = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.retirado,
+            )
+        )
+        self.membresia_retirada.retirar()
+
+        self.url_historial = (
+            f"/api/grupos/{self.grupo.id}/historial/"
+        )
+
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+    def test_crear_actividad_registra_evento_automaticamente(
+        self,
+    ):
+        fecha_inicio = timezone.now() + timedelta(days=1)
+        fecha_fin = fecha_inicio + timedelta(days=3)
+
+        response = self.client.post(
+            "/api/grupos/",
+            {
+                "nombre": "Nueva actividad SC-56",
+                "descripcion": "Creación con historial",
+                "fecha_inicio": fecha_inicio.isoformat(),
+                "fecha_fin": fecha_fin.isoformat(),
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        grupo_creado = Group.objects.get(
+            id=response.data["id"]
+        )
+
+        evento = ActivityHistory.objects.get(
+            grupo=grupo_creado,
+            tipo_accion=(
+                ActivityHistory.TIPO_ACTIVIDAD_CREADA
+            ),
+        )
+
+        self.assertEqual(
+            evento.usuario,
+            self.fernando,
+        )
+
+        self.assertEqual(
+            evento.usuario_username,
+            "fernando_sc56",
+        )
+
+        self.assertEqual(
+            evento.grupo_nombre,
+            "Nueva actividad SC-56",
+        )
+
+        self.assertIn(
+            "creó la actividad",
+            evento.descripcion,
+        )
+
+        self.assertIsNotNone(
+            evento.fecha_evento,
+        )
+
+    def test_actualizar_actividad_registra_cambios_antes_y_despues(
+        self,
+    ):
+        response = self.client.patch(
+            f"/api/grupos/{self.grupo.id}/",
+            {
+                "nombre": "Actividad SC-56 actualizada",
+                "descripcion": "Descripción modificada",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        evento = ActivityHistory.objects.get(
+            grupo=self.grupo,
+            tipo_accion=(
+                ActivityHistory
+                .TIPO_ACTIVIDAD_ACTUALIZADA
+            ),
+        )
+
+        self.assertEqual(
+            evento.usuario,
+            self.fernando,
+        )
+
+        self.assertCountEqual(
+            evento.datos["campos_modificados"],
+            [
+                "nombre",
+                "descripcion",
+            ],
+        )
+
+        self.assertEqual(
+            evento.datos["antes"]["nombre"],
+            "Actividad SC-56",
+        )
+
+        self.assertEqual(
+            evento.datos["despues"]["nombre"],
+            "Actividad SC-56 actualizada",
+        )
+
+    def test_registra_ingreso_retiro_y_reingreso_participante(
+        self,
+    ):
+        agregar = (
+            f"/api/grupos/{self.grupo.id}/participantes/"
+        )
+
+        retirar = (
+            f"/api/grupos/{self.grupo.id}/"
+            f"participantes/{self.damarys.id}/"
+        )
+
+        respuesta_ingreso = self.client.post(
+            agregar,
+            {
+                "usuario_id": self.damarys.id,
+            },
+            format="json",
+        )
+
+        respuesta_retiro = self.client.delete(
+            retirar
+        )
+
+        respuesta_reingreso = self.client.post(
+            agregar,
+            {
+                "usuario_id": self.damarys.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            respuesta_ingreso.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            respuesta_retiro.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            respuesta_reingreso.status_code,
+            status.HTTP_200_OK,
+        )
+
+        tipos = list(
+            ActivityHistory.objects
+            .filter(grupo=self.grupo)
+            .order_by("fecha_evento", "id")
+            .values_list(
+                "tipo_accion",
+                flat=True,
+            )
+        )
+
+        self.assertEqual(
+            tipos,
+            [
+                ActivityHistory
+                .TIPO_PARTICIPANTE_INGRESO,
+                ActivityHistory
+                .TIPO_PARTICIPANTE_RETIRO,
+                ActivityHistory
+                .TIPO_PARTICIPANTE_REINGRESO,
+            ],
+        )
+
+        for evento in ActivityHistory.objects.filter(
+            grupo=self.grupo
+        ):
+            self.assertEqual(
+                evento.usuario,
+                self.fernando,
+            )
+
+            self.assertEqual(
+                evento.datos["participante_username"],
+                "damarys_sc56",
+            )
+
+    def test_registra_creacion_edicion_y_eliminacion_de_gasto(
+        self,
+    ):
+        respuesta_creacion = self.client.post(
+            f"/api/grupos/{self.grupo.id}/gastos/",
+            {
+                "descripcion": "Cena SC-56",
+                "monto": "30.00",
+                "fecha_gasto": "2026-07-26",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            respuesta_creacion.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        gasto_id = respuesta_creacion.data["gasto"]["id"]
+
+        respuesta_edicion = self.client.patch(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"gastos/{gasto_id}/"
+            ),
+            {
+                "descripcion": "Cena actualizada SC-56",
+                "monto": "40.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            respuesta_edicion.status_code,
+            status.HTTP_200_OK,
+        )
+
+        respuesta_eliminacion = self.client.delete(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"gastos/{gasto_id}/"
+            )
+        )
+
+        self.assertEqual(
+            respuesta_eliminacion.status_code,
+            status.HTTP_200_OK,
+        )
+
+        tipos = set(
+            ActivityHistory.objects
+            .filter(grupo=self.grupo)
+            .values_list(
+                "tipo_accion",
+                flat=True,
+            )
+        )
+
+        self.assertSetEqual(
+            tipos,
+            {
+                ActivityHistory.TIPO_GASTO_CREADO,
+                ActivityHistory.TIPO_GASTO_ACTUALIZADO,
+                ActivityHistory.TIPO_GASTO_ELIMINADO,
+            },
+        )
+
+        evento_eliminacion = ActivityHistory.objects.get(
+            grupo=self.grupo,
+            tipo_accion=(
+                ActivityHistory.TIPO_GASTO_ELIMINADO
+            ),
+        )
+
+        self.assertEqual(
+            evento_eliminacion.datos["gasto_id"],
+            gasto_id,
+        )
+
+        self.assertEqual(
+            evento_eliminacion.datos["descripcion"],
+            "Cena actualizada SC-56",
+        )
+
+        self.assertEqual(
+            evento_eliminacion.datos["monto"],
+            "40.00",
+        )
+
+        self.assertFalse(
+            Expense.objects.filter(
+                id=gasto_id
+            ).exists()
+        )
+
+    def test_registrar_pago_genera_evento_con_usuario_y_monto(
+        self,
+    ):
+        gasto = Expense.objects.create(
+            grupo=self.grupo,
+            descripcion="Gasto base SC-56",
+            monto=Decimal("20.00"),
+            fecha_gasto="2026-07-26",
+            registrado_por=self.fernando,
+        )
+        gasto.sincronizar_integrantes_activos()
+
+        response = self.client.post(
+            f"/api/grupos/{self.grupo.id}/pagos/",
+            {
+                "monto": "5.00",
+                "fecha_pago": "2026-07-26",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        evento = ActivityHistory.objects.get(
+            grupo=self.grupo,
+            tipo_accion=(
+                ActivityHistory.TIPO_PAGO_CREADO
+            ),
+        )
+
+        self.assertEqual(
+            evento.usuario,
+            self.fernando,
+        )
+
+        self.assertEqual(
+            evento.usuario_username,
+            "fernando_sc56",
+        )
+
+        self.assertEqual(
+            evento.datos["monto"],
+            "5.00",
+        )
+
+        self.assertEqual(
+            evento.datos["pagador_username"],
+            "fernando_sc56",
+        )
+
+    def test_creador_y_participante_activo_consultan_historial(
+        self,
+    ):
+        ActivityHistory.registrar(
+            grupo=self.grupo,
+            usuario=self.fernando,
+            tipo_accion=(
+                ActivityHistory.TIPO_ACTIVIDAD_CREADA
+            ),
+            descripcion="Evento visible para miembros activos.",
+            datos={
+                "referencia": "SC-56",
+            },
+        )
+
+        respuesta_creador = self.client.get(
+            self.url_historial
+        )
+
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        respuesta_participante = self.client.get(
+            self.url_historial
+        )
+
+        self.assertEqual(
+            respuesta_creador.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            respuesta_participante.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            respuesta_participante.data["total_eventos"],
+            1,
+        )
+
+    def test_retirado_y_externo_no_pueden_consultar_historial(
+        self,
+    ):
+        for usuario in [
+            self.retirado,
+            self.externo,
+        ]:
+            self.client.force_authenticate(
+                user=usuario
+            )
+
+            response = self.client.get(
+                self.url_historial
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
+
+            self.assertEqual(
+                response.data["error"],
+                (
+                    "Grupo no encontrado o no tienes permiso "
+                    "para consultar su historial."
+                ),
+            )
+
+    def test_actividad_cerrada_conserva_y_muestra_historial(
+        self,
+    ):
+        ahora = timezone.now()
+
+        grupo_cerrado = Group.objects.create(
+            nombre="Actividad cerrada SC-56",
+            descripcion="Historial permanente",
+            creador=self.fernando,
+            fecha_inicio=ahora - timedelta(days=3),
+            fecha_fin=ahora - timedelta(days=1),
+        )
+
+        grupo_cerrado.participantes.add(
+            self.fernando,
+            self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=grupo_cerrado,
+            usuario=self.fernando,
+        )
+
+        GroupMembership.objects.create(
+            grupo=grupo_cerrado,
+            usuario=self.carlita,
+        )
+
+        ActivityHistory.registrar(
+            grupo=grupo_cerrado,
+            usuario=self.fernando,
+            tipo_accion=(
+                ActivityHistory.TIPO_GASTO_CREADO
+            ),
+            descripcion="Gasto histórico conservado.",
+            datos={
+                "gasto_id": 999,
+                "descripcion": "Gasto eliminado",
+                "monto": "18.00",
+            },
+        )
+
+        response = self.client.get(
+            (
+                f"/api/grupos/{grupo_cerrado.id}/"
+                "historial/"
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["estado_actividad"],
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertEqual(
+            response.data["total_eventos"],
+            1,
+        )
+
+        self.assertEqual(
+            response.data["eventos"][0]["datos"]["monto"],
+            "18.00",
+        )
+
+    def test_eventos_se_ordenan_del_mas_reciente_al_mas_antiguo(
+        self,
+    ):
+        ahora = timezone.now()
+
+        evento_antiguo = ActivityHistory.registrar(
+            grupo=self.grupo,
+            usuario=self.fernando,
+            tipo_accion=(
+                ActivityHistory.TIPO_ACTIVIDAD_CREADA
+            ),
+            descripcion="Evento antiguo.",
+        )
+
+        evento_reciente = ActivityHistory.registrar(
+            grupo=self.grupo,
+            usuario=self.fernando,
+            tipo_accion=(
+                ActivityHistory.TIPO_ACTIVIDAD_ACTUALIZADA
+            ),
+            descripcion="Evento reciente.",
+        )
+
+        ActivityHistory.objects.filter(
+            id=evento_antiguo.id
+        ).update(
+            fecha_evento=ahora - timedelta(hours=2)
+        )
+
+        ActivityHistory.objects.filter(
+            id=evento_reciente.id
+        ).update(
+            fecha_evento=ahora - timedelta(hours=1)
+        )
+
+        response = self.client.get(
+            self.url_historial
+        )
+
+        ids = [
+            evento["id"]
+            for evento in response.data["eventos"]
+        ]
+
+        self.assertEqual(
+            ids,
+            [
+                evento_reciente.id,
+                evento_antiguo.id,
+            ],
+        )
+
+    def test_historial_solo_lectura_no_permite_editar_ni_eliminar(
+        self,
+    ):
+        ActivityHistory.registrar(
+            grupo=self.grupo,
+            usuario=self.fernando,
+            tipo_accion=(
+                ActivityHistory.TIPO_ACTIVIDAD_CREADA
+            ),
+            descripcion="Evento protegido.",
+        )
+
+        respuesta_patch = self.client.patch(
+            self.url_historial,
+            {
+                "descripcion": "Cambio no permitido",
+            },
+            format="json",
+        )
+
+        respuesta_delete = self.client.delete(
+            self.url_historial
+        )
+
+        respuesta_post = self.client.post(
+            self.url_historial,
+            {
+                "tipo_accion": "manual",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            respuesta_patch.status_code,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+        self.assertEqual(
+            respuesta_delete.status_code,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+        self.assertEqual(
+            respuesta_post.status_code,
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+        self.assertEqual(
+            ActivityHistory.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            1,
+        )
+
+    def test_operacion_invalida_no_genera_evento(
+        self,
+    ):
+        response = self.client.post(
+            f"/api/grupos/{self.grupo.id}/gastos/",
+            {
+                "descripcion": "",
+                "monto": "0.00",
+                "fecha_gasto": "2026-07-26",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            Expense.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            0,
+        )
+
+        self.assertEqual(
+            ActivityHistory.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            0,
+        )
+
+    def test_fallo_del_historial_revierte_operacion_principal(
+        self,
+    ):
+        with patch(
+            "expenses.views.registrar_evento_historial",
+            side_effect=RuntimeError(
+                "Fallo simulado del historial"
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    f"/api/grupos/{self.grupo.id}/gastos/",
+                    {
+                        "descripcion": "Gasto revertido",
+                        "monto": "20.00",
+                        "fecha_gasto": "2026-07-26",
+                    },
+                    format="json",
+                )
+
+        self.assertFalse(
+            Expense.objects.filter(
+                grupo=self.grupo,
+                descripcion="Gasto revertido",
+            ).exists()
+        )
+
+        self.assertEqual(
+            ActivityHistory.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            0,
+        )
+
+    def test_historial_vacio_muestra_mensaje_informativo(
+        self,
+    ):
+        response = self.client.get(
+            self.url_historial
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["total_eventos"],
+            0,
+        )
+
+        self.assertEqual(
+            response.data["eventos"],
+            [],
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            (
+                "Todavía no existen eventos registrados "
+                "en esta actividad."
+            ),
+        )
+
+    def test_snapshots_se_conservan_aunque_cambien_datos_relacionados(
+        self,
+    ):
+        evento = ActivityHistory.registrar(
+            grupo=self.grupo,
+            usuario=self.fernando,
+            tipo_accion=(
+                ActivityHistory.TIPO_GASTO_ELIMINADO
+            ),
+            descripcion=(
+                "fernando_sc56 eliminó el gasto "
+                '"Hospedaje original".'
+            ),
+            datos={
+                "gasto_id": 501,
+                "descripcion": "Hospedaje original",
+                "monto": "80.00",
+                "participantes": [
+                    "fernando_sc56",
+                    "carlita_sc56",
+                ],
+            },
+        )
+
+        self.grupo.nombre = "Nombre actual distinto"
+        self.grupo.save(
+            update_fields=["nombre"]
+        )
+
+        self.fernando.username = "fernando_modificado"
+        self.fernando.save(
+            update_fields=["username"]
+        )
+
+        evento.refresh_from_db()
+
+        self.assertEqual(
+            evento.grupo_nombre,
+            "Actividad SC-56",
+        )
+
+        self.assertEqual(
+            evento.usuario_username,
+            "fernando_sc56",
+        )
+
+        self.assertEqual(
+            evento.datos["descripcion"],
+            "Hospedaje original",
+        )
+
+        self.assertEqual(
+            evento.datos["monto"],
+            "80.00",
+        )
+
+        response = self.client.get(
+            self.url_historial
+        )
+
+        evento_respuesta = response.data["eventos"][0]
+
+        self.assertEqual(
+            evento_respuesta["grupo_nombre"],
+            "Actividad SC-56",
+        )
+
+        self.assertEqual(
+            evento_respuesta["usuario_username"],
+            "fernando_sc56",
+        )
+
+        self.assertEqual(
+            evento_respuesta["datos"]["gasto_id"],
+            501,
         )
 

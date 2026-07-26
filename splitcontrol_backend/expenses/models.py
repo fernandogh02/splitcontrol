@@ -536,3 +536,146 @@ class Notification(models.Model):
         )
 
         return True
+
+
+class ActivityHistory(models.Model):
+    TIPO_ACTIVIDAD_CREADA = "actividad_creada"
+    TIPO_ACTIVIDAD_ACTUALIZADA = "actividad_actualizada"
+    TIPO_PARTICIPANTE_INGRESO = "participante_ingreso"
+    TIPO_PARTICIPANTE_RETIRO = "participante_retiro"
+    TIPO_PARTICIPANTE_REINGRESO = "participante_reingreso"
+    TIPO_GASTO_CREADO = "gasto_creado"
+    TIPO_GASTO_ACTUALIZADO = "gasto_actualizado"
+    TIPO_GASTO_ELIMINADO = "gasto_eliminado"
+    TIPO_PAGO_CREADO = "pago_creado"
+
+    TIPOS_ACCION = [
+        (
+            TIPO_ACTIVIDAD_CREADA,
+            "Actividad creada",
+        ),
+        (
+            TIPO_ACTIVIDAD_ACTUALIZADA,
+            "Actividad actualizada",
+        ),
+        (
+            TIPO_PARTICIPANTE_INGRESO,
+            "Participante agregado",
+        ),
+        (
+            TIPO_PARTICIPANTE_RETIRO,
+            "Participante retirado",
+        ),
+        (
+            TIPO_PARTICIPANTE_REINGRESO,
+            "Participante reingresado",
+        ),
+        (
+            TIPO_GASTO_CREADO,
+            "Gasto creado",
+        ),
+        (
+            TIPO_GASTO_ACTUALIZADO,
+            "Gasto actualizado",
+        ),
+        (
+            TIPO_GASTO_ELIMINADO,
+            "Gasto eliminado",
+        ),
+        (
+            TIPO_PAGO_CREADO,
+            "Pago creado",
+        ),
+    ]
+
+    grupo = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name="historial",
+    )
+
+    grupo_nombre = models.CharField(
+        max_length=100,
+    )
+
+    usuario = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="eventos_historial",
+    )
+
+    usuario_username = models.CharField(
+        max_length=150,
+    )
+
+    tipo_accion = models.CharField(
+        max_length=40,
+        choices=TIPOS_ACCION,
+    )
+
+    descripcion = models.TextField()
+
+    datos = models.JSONField(
+        default=dict,
+        blank=True,
+    )
+
+    fecha_evento = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    class Meta:
+        ordering = [
+            "-fecha_evento",
+            "-id",
+        ]
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "grupo",
+                    "-fecha_evento",
+                ],
+                name="hist_grupo_fecha_idx",
+            ),
+            models.Index(
+                fields=[
+                    "grupo",
+                    "tipo_accion",
+                    "-fecha_evento",
+                ],
+                name="hist_grupo_tipo_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.grupo_nombre} - "
+            f"{self.get_tipo_accion_display()} - "
+            f"{self.usuario_username}"
+        )
+
+    @classmethod
+    def registrar(
+        cls,
+        grupo,
+        usuario,
+        tipo_accion,
+        descripcion,
+        datos=None,
+    ):
+        return cls.objects.create(
+            grupo=grupo,
+            grupo_nombre=grupo.nombre,
+            usuario=usuario,
+            usuario_username=(
+                usuario.username
+                if usuario
+                else "sistema"
+            ),
+            tipo_accion=tipo_accion,
+            descripcion=descripcion,
+            datos=datos or {},
+        )

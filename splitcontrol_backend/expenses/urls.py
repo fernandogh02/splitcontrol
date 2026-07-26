@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    ActivityHistoryListView,
     AddParticipantView,
     ExpenseCreateView,
     ExpenseDetailView,
@@ -56,6 +57,11 @@ urlpatterns = [
         "grupos/<int:pk>/membresias/",
         GroupMembershipHistoryView.as_view(),
         name="historial_membresias_grupo",
+    ),
+    path(
+        "grupos/<int:pk>/historial/",
+        ActivityHistoryListView.as_view(),
+        name="historial_actividad",
     ),
     path(
         "grupos/<int:pk>/gastos/",
