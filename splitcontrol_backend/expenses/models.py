@@ -38,6 +38,12 @@ class Group(models.Model):
         blank=True,
     )
 
+    fecha_cierre_automatico = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+    )
+
     fecha_creacion = models.DateTimeField(
         auto_now_add=True,
     )
@@ -82,15 +88,138 @@ class Group(models.Model):
         if not self.fecha_inicio or not self.fecha_fin:
             return self.ESTADO_SIN_CONFIGURAR
 
+        if self.fecha_cierre_automatico:
+            return self.ESTADO_CERRADA
+
         fecha_actual = timezone.now()
 
         if fecha_actual < self.fecha_inicio:
             return self.ESTADO_PROGRAMADA
 
-        if fecha_actual <= self.fecha_fin:
-            return self.ESTADO_ACTIVA
+        if fecha_actual >= self.fecha_fin:
+            return self.ESTADO_CERRADA
 
-        return self.ESTADO_CERRADA
+        return self.ESTADO_ACTIVA
+
+    def debe_cerrarse_automaticamente(
+        self,
+        momento=None,
+    ):
+        momento = momento or timezone.now()
+
+        return bool(
+            self.pk
+            and self.fecha_fin
+            and not self.fecha_cierre_automatico
+            and momento >= self.fecha_fin
+        )
+
+    @transaction.atomic
+    def cerrar_automaticamente(
+        self,
+        momento=None,
+    ):
+        momento = momento or timezone.now()
+
+        if not self.pk:
+            return False
+
+        grupo_bloqueado = (
+            Group.objects
+            .select_for_update()
+            .get(pk=self.pk)
+        )
+
+        if not grupo_bloqueado.debe_cerrarse_automaticamente(
+            momento
+        ):
+            self.fecha_cierre_automatico = (
+                grupo_bloqueado.fecha_cierre_automatico
+            )
+            return False
+
+        fecha_cierre_efectiva = (
+            grupo_bloqueado.fecha_fin
+        )
+
+        grupo_bloqueado.fecha_cierre_automatico = (
+            fecha_cierre_efectiva
+        )
+
+        grupo_bloqueado.save(
+            update_fields=[
+                "fecha_cierre_automatico",
+            ]
+        )
+
+        ActivityHistory.registrar(
+            grupo=grupo_bloqueado,
+            usuario=None,
+            tipo_accion=(
+                ActivityHistory
+                .TIPO_ACTIVIDAD_CERRADA_AUTOMATICAMENTE
+            ),
+            descripcion=(
+                f'El sistema cerró automáticamente la '
+                f'actividad "{grupo_bloqueado.nombre}".'
+            ),
+            datos={
+                "grupo_id": grupo_bloqueado.id,
+                "grupo_nombre": (
+                    grupo_bloqueado.nombre
+                ),
+                "fecha_fin_programada": (
+                    grupo_bloqueado.fecha_fin.isoformat()
+                ),
+                "fecha_cierre_efectiva": (
+                    fecha_cierre_efectiva.isoformat()
+                ),
+                "procesado_en": momento.isoformat(),
+                "estado": self.ESTADO_CERRADA,
+                "origen": "sistema",
+            },
+        )
+
+        self.fecha_cierre_automatico = (
+            grupo_bloqueado.fecha_cierre_automatico
+        )
+
+        return True
+
+    @classmethod
+    def cerrar_actividades_vencidas(
+        cls,
+        momento=None,
+    ):
+        momento = momento or timezone.now()
+
+        grupos_ids = list(
+            cls.objects
+            .filter(
+                fecha_fin__isnull=False,
+                fecha_fin__lte=momento,
+                fecha_cierre_automatico__isnull=True,
+            )
+            .order_by("fecha_fin", "id")
+            .values_list(
+                "id",
+                flat=True,
+            )
+        )
+
+        cantidad_cerrada = 0
+
+        for grupo_id in grupos_ids:
+            grupo = cls.objects.get(
+                id=grupo_id
+            )
+
+            if grupo.cerrar_automaticamente(
+                momento=momento
+            ):
+                cantidad_cerrada += 1
+
+        return cantidad_cerrada
 
     def obtener_integrantes_activos(self):
         return (
@@ -541,6 +670,9 @@ class Notification(models.Model):
 class ActivityHistory(models.Model):
     TIPO_ACTIVIDAD_CREADA = "actividad_creada"
     TIPO_ACTIVIDAD_ACTUALIZADA = "actividad_actualizada"
+    TIPO_ACTIVIDAD_CERRADA_AUTOMATICAMENTE = (
+        "actividad_cerrada_automaticamente"
+    )
     TIPO_PARTICIPANTE_INGRESO = "participante_ingreso"
     TIPO_PARTICIPANTE_RETIRO = "participante_retiro"
     TIPO_PARTICIPANTE_REINGRESO = "participante_reingreso"
@@ -557,6 +689,10 @@ class ActivityHistory(models.Model):
         (
             TIPO_ACTIVIDAD_ACTUALIZADA,
             "Actividad actualizada",
+        ),
+        (
+            TIPO_ACTIVIDAD_CERRADA_AUTOMATICAMENTE,
+            "Actividad cerrada automáticamente",
         ),
         (
             TIPO_PARTICIPANTE_INGRESO,
