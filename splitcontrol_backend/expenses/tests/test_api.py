@@ -1,8 +1,10 @@
 from datetime import timedelta
+from io import StringIO
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.management import call_command
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -5969,5 +5971,517 @@ class HistorialActividadSC56Test(APITestCase):
         self.assertEqual(
             evento_respuesta["datos"]["gasto_id"],
             501,
+        )
+
+
+class CierreAutomaticoActividadSC57Test(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc57",
+            email="fernando_sc57@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc57",
+            email="carlita_sc57@example.com",
+            password="Prueba123",
+        )
+
+        self.nuevo_usuario = User.objects.create_user(
+            username="nuevo_sc57",
+            email="nuevo_sc57@example.com",
+            password="Prueba123",
+        )
+
+        self.momento_base = timezone.now()
+
+        self.grupo_vencido = Group.objects.create(
+            nombre="Actividad vencida SC-57",
+            descripcion="Debe cerrarse automáticamente",
+            creador=self.fernando,
+            fecha_inicio=(
+                self.momento_base
+                - timedelta(days=2)
+            ),
+            fecha_fin=(
+                self.momento_base
+                - timedelta(hours=1)
+            ),
+        )
+
+        self.grupo_vencido.participantes.add(
+            self.fernando,
+            self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo_vencido,
+            usuario=self.fernando,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo_vencido,
+            usuario=self.carlita,
+        )
+
+        self.grupo_activo = Group.objects.create(
+            nombre="Actividad activa SC-57",
+            descripcion="Todavía no debe cerrarse",
+            creador=self.fernando,
+            fecha_inicio=(
+                self.momento_base
+                - timedelta(hours=1)
+            ),
+            fecha_fin=(
+                self.momento_base
+                + timedelta(hours=2)
+            ),
+        )
+
+        self.grupo_activo.participantes.add(
+            self.fernando
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo_activo,
+            usuario=self.fernando,
+        )
+
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+    def test_actividad_se_cierra_al_alcanzar_fecha_fin(
+        self,
+    ):
+        fecha_fin = self.momento_base
+
+        grupo = Group.objects.create(
+            nombre="Cierre exacto SC-57",
+            descripcion="Cierra justo en fecha fin",
+            creador=self.fernando,
+            fecha_inicio=(
+                fecha_fin
+                - timedelta(hours=1)
+            ),
+            fecha_fin=fecha_fin,
+        )
+
+        resultado = grupo.cerrar_automaticamente(
+            momento=fecha_fin
+        )
+
+        self.assertTrue(
+            resultado
+        )
+
+        grupo.refresh_from_db()
+
+        self.assertEqual(
+            grupo.estado,
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertEqual(
+            grupo.fecha_cierre_automatico,
+            fecha_fin,
+        )
+
+    def test_cierre_persistente_guarda_fecha_programada(
+        self,
+    ):
+        resultado = (
+            self.grupo_vencido
+            .cerrar_automaticamente(
+                momento=self.momento_base
+            )
+        )
+
+        self.assertTrue(
+            resultado
+        )
+
+        self.grupo_vencido.refresh_from_db()
+
+        self.assertEqual(
+            self.grupo_vencido
+            .fecha_cierre_automatico,
+            self.grupo_vencido.fecha_fin,
+        )
+
+        self.assertEqual(
+            self.grupo_vencido.estado,
+            Group.ESTADO_CERRADA,
+        )
+
+    def test_cierre_registra_evento_unico_del_sistema(
+        self,
+    ):
+        self.grupo_vencido.cerrar_automaticamente(
+            momento=self.momento_base
+        )
+
+        evento = ActivityHistory.objects.get(
+            grupo=self.grupo_vencido,
+            tipo_accion=(
+                ActivityHistory
+                .TIPO_ACTIVIDAD_CERRADA_AUTOMATICAMENTE
+            ),
+        )
+
+        self.assertIsNone(
+            evento.usuario,
+        )
+
+        self.assertEqual(
+            evento.usuario_username,
+            "sistema",
+        )
+
+        self.assertEqual(
+            evento.grupo_nombre,
+            "Actividad vencida SC-57",
+        )
+
+        self.assertIn(
+            "cerró automáticamente",
+            evento.descripcion,
+        )
+
+        self.assertEqual(
+            evento.datos["origen"],
+            "sistema",
+        )
+
+        self.assertEqual(
+            evento.datos["estado"],
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertEqual(
+            evento.datos["fecha_fin_programada"],
+            self.grupo_vencido.fecha_fin.isoformat(),
+        )
+
+        self.assertIsNotNone(
+            evento.fecha_evento,
+        )
+
+    def test_ejecucion_repetida_no_duplica_cierre_ni_historial(
+        self,
+    ):
+        primer_resultado = (
+            self.grupo_vencido
+            .cerrar_automaticamente(
+                momento=self.momento_base
+            )
+        )
+
+        segundo_resultado = (
+            self.grupo_vencido
+            .cerrar_automaticamente(
+                momento=(
+                    self.momento_base
+                    + timedelta(minutes=10)
+                )
+            )
+        )
+
+        self.assertTrue(
+            primer_resultado
+        )
+
+        self.assertFalse(
+            segundo_resultado
+        )
+
+        self.assertEqual(
+            ActivityHistory.objects.filter(
+                grupo=self.grupo_vencido,
+                tipo_accion=(
+                    ActivityHistory
+                    .TIPO_ACTIVIDAD_CERRADA_AUTOMATICAMENTE
+                ),
+            ).count(),
+            1,
+        )
+
+    def test_cierre_masivo_procesa_solo_actividades_vencidas(
+        self,
+    ):
+        otro_grupo_vencido = Group.objects.create(
+            nombre="Otra actividad vencida SC-57",
+            descripcion="También debe cerrarse",
+            creador=self.fernando,
+            fecha_inicio=(
+                self.momento_base
+                - timedelta(days=3)
+            ),
+            fecha_fin=(
+                self.momento_base
+                - timedelta(minutes=30)
+            ),
+        )
+
+        cantidad = (
+            Group.cerrar_actividades_vencidas(
+                momento=self.momento_base
+            )
+        )
+
+        self.assertEqual(
+            cantidad,
+            2,
+        )
+
+        self.grupo_vencido.refresh_from_db()
+        otro_grupo_vencido.refresh_from_db()
+        self.grupo_activo.refresh_from_db()
+
+        self.assertIsNotNone(
+            self.grupo_vencido
+            .fecha_cierre_automatico
+        )
+
+        self.assertIsNotNone(
+            otro_grupo_vencido
+            .fecha_cierre_automatico
+        )
+
+        self.assertIsNone(
+            self.grupo_activo
+            .fecha_cierre_automatico
+        )
+
+        self.assertEqual(
+            self.grupo_activo.estado,
+            Group.ESTADO_ACTIVA,
+        )
+
+    def test_comando_cierra_actividades_vencidas(
+        self,
+    ):
+        salida = StringIO()
+
+        call_command(
+            "cerrar_actividades",
+            stdout=salida,
+        )
+
+        self.grupo_vencido.refresh_from_db()
+
+        self.assertEqual(
+            self.grupo_vencido.estado,
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertIsNotNone(
+            self.grupo_vencido
+            .fecha_cierre_automatico
+        )
+
+        self.assertIn(
+            "1 actividad(es) cerrada(s) automáticamente.",
+            salida.getvalue(),
+        )
+
+    def test_comando_repetido_informa_que_no_hay_pendientes(
+        self,
+    ):
+        primera_salida = StringIO()
+        segunda_salida = StringIO()
+
+        call_command(
+            "cerrar_actividades",
+            stdout=primera_salida,
+        )
+
+        call_command(
+            "cerrar_actividades",
+            stdout=segunda_salida,
+        )
+
+        self.assertIn(
+            "No existen actividades pendientes de cierre.",
+            segunda_salida.getvalue(),
+        )
+
+        self.assertEqual(
+            ActivityHistory.objects.filter(
+                grupo=self.grupo_vencido,
+                tipo_accion=(
+                    ActivityHistory
+                    .TIPO_ACTIVIDAD_CERRADA_AUTOMATICAMENTE
+                ),
+            ).count(),
+            1,
+        )
+
+    def test_fallo_del_historial_revierte_el_cierre(
+        self,
+    ):
+        with patch(
+            "expenses.models.ActivityHistory.registrar",
+            side_effect=RuntimeError(
+                "Fallo simulado del historial"
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                (
+                    self.grupo_vencido
+                    .cerrar_automaticamente(
+                        momento=self.momento_base
+                    )
+                )
+
+        self.grupo_vencido.refresh_from_db()
+
+        self.assertIsNone(
+            self.grupo_vencido
+            .fecha_cierre_automatico
+        )
+
+        self.assertEqual(
+            ActivityHistory.objects.filter(
+                grupo=self.grupo_vencido,
+            ).count(),
+            0,
+        )
+
+    def test_actividad_cerrada_bloquea_nuevas_operaciones(
+        self,
+    ):
+        self.grupo_vencido.cerrar_automaticamente(
+            momento=self.momento_base
+        )
+
+        respuesta_gasto = self.client.post(
+            (
+                f"/api/grupos/"
+                f"{self.grupo_vencido.id}/gastos/"
+            ),
+            {
+                "descripcion": "Gasto posterior al cierre",
+                "monto": "10.00",
+                "fecha_gasto": "2026-07-26",
+            },
+            format="json",
+        )
+
+        respuesta_pago = self.client.post(
+            (
+                f"/api/grupos/"
+                f"{self.grupo_vencido.id}/pagos/"
+            ),
+            {
+                "monto": "5.00",
+                "fecha_pago": "2026-07-26",
+            },
+            format="json",
+        )
+
+        respuesta_agregar = self.client.post(
+            (
+                f"/api/grupos/"
+                f"{self.grupo_vencido.id}/"
+                "participantes/"
+            ),
+            {
+                "usuario_id": self.nuevo_usuario.id,
+            },
+            format="json",
+        )
+
+        respuesta_retirar = self.client.delete(
+            (
+                f"/api/grupos/"
+                f"{self.grupo_vencido.id}/"
+                f"participantes/{self.carlita.id}/"
+            )
+        )
+
+        for response in [
+            respuesta_gasto,
+            respuesta_pago,
+            respuesta_agregar,
+            respuesta_retirar,
+        ]:
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        self.assertFalse(
+            Expense.objects.filter(
+                grupo=self.grupo_vencido,
+            ).exists()
+        )
+
+        self.assertFalse(
+            Payment.objects.filter(
+                grupo=self.grupo_vencido,
+            ).exists()
+        )
+
+        self.assertFalse(
+            GroupMembership.objects.filter(
+                grupo=self.grupo_vencido,
+                usuario=self.nuevo_usuario,
+                activo=True,
+            ).exists()
+        )
+
+    def test_datos_e_historial_siguen_disponibles_tras_cierre(
+        self,
+    ):
+        ActivityHistory.registrar(
+            grupo=self.grupo_vencido,
+            usuario=self.fernando,
+            tipo_accion=(
+                ActivityHistory.TIPO_ACTIVIDAD_CREADA
+            ),
+            descripcion="Evento previo al cierre.",
+        )
+
+        self.grupo_vencido.cerrar_automaticamente(
+            momento=self.momento_base
+        )
+
+        detalle = self.client.get(
+            f"/api/grupos/{self.grupo_vencido.id}/"
+        )
+
+        historial = self.client.get(
+            (
+                f"/api/grupos/"
+                f"{self.grupo_vencido.id}/historial/"
+            )
+        )
+
+        self.assertEqual(
+            detalle.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            detalle.data["estado"],
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertEqual(
+            historial.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            historial.data["estado_actividad"],
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertEqual(
+            historial.data["total_eventos"],
+            2,
         )
 
