@@ -9,6 +9,7 @@ from rest_framework.test import APITestCase
 
 from expenses.models import (
     Expense,
+    ExpenseDivision,
     Group,
     GroupMembership,
     Payment,
@@ -2294,4 +2295,535 @@ class RegistroGastoComunTest(APITestCase):
         self.assertIn(
             "fecha_gasto",
             response.data,
+        )
+
+
+class EditarEliminarGastoSC49Test(APITestCase):
+
+    def setUp(self):
+        self.carlita = User.objects.create_user(
+            username="carlita_sc49",
+            email="carlita_sc49@example.com",
+            password="Prueba123",
+        )
+
+        self.andres = User.objects.create_user(
+            username="andres_sc49",
+            email="andres_sc49@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc49",
+            email="damarys_sc49@example.com",
+            password="Prueba123",
+        )
+
+        self.fernando = User.objects.create_user(
+            username="fernando_sc49",
+            email="fernando_sc49@example.com",
+            password="Prueba123",
+        )
+
+        ahora = timezone.now()
+
+        self.grupo_activo = Group.objects.create(
+            nombre="Actividad activa SC-49",
+            descripcion="Edición y eliminación de gastos",
+            creador=self.carlita,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
+        )
+
+        self.grupo_activo.participantes.add(
+            self.carlita,
+            self.andres,
+            self.damarys,
+        )
+
+        self.membresias_activas = {}
+
+        for usuario in [
+            self.carlita,
+            self.andres,
+            self.damarys,
+        ]:
+            self.membresias_activas[usuario.id] = (
+                GroupMembership.objects.create(
+                    grupo=self.grupo_activo,
+                    usuario=usuario,
+                )
+            )
+
+        self.gasto = Expense.objects.create(
+            grupo=self.grupo_activo,
+            descripcion="Cena original",
+            monto=Decimal("60.00"),
+            fecha_gasto="2026-07-20",
+            registrado_por=self.carlita,
+        )
+
+        self.gasto.sincronizar_integrantes_activos()
+
+        self.gasto_secundario = Expense.objects.create(
+            grupo=self.grupo_activo,
+            descripcion="Transporte",
+            monto=Decimal("15.00"),
+            fecha_gasto="2026-07-21",
+            registrado_por=self.andres,
+        )
+
+        self.gasto_secundario.sincronizar_integrantes_activos()
+
+        self.grupo_cerrado = Group.objects.create(
+            nombre="Actividad cerrada SC-49",
+            descripcion="Gastos históricos protegidos",
+            creador=self.carlita,
+            fecha_inicio=ahora - timedelta(days=3),
+            fecha_fin=ahora - timedelta(days=1),
+        )
+
+        self.grupo_cerrado.participantes.add(
+            self.carlita,
+            self.andres,
+        )
+
+        for usuario in [
+            self.carlita,
+            self.andres,
+        ]:
+            GroupMembership.objects.create(
+                grupo=self.grupo_cerrado,
+                usuario=usuario,
+            )
+
+        self.gasto_cerrado = Expense.objects.create(
+            grupo=self.grupo_cerrado,
+            descripcion="Gasto histórico",
+            monto=Decimal("20.00"),
+            fecha_gasto="2026-07-18",
+            registrado_por=self.carlita,
+        )
+
+        self.gasto_cerrado.sincronizar_integrantes_activos()
+
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+    def url_gasto(self, grupo, gasto):
+        return (
+            f"/api/grupos/{grupo.id}/"
+            f"gastos/{gasto.id}/"
+        )
+
+    def test_creador_edita_descripcion_y_fecha_preservando_division(
+        self,
+    ):
+        participantes_originales = set(
+            self.gasto.participantes.values_list(
+                "id",
+                flat=True,
+            )
+        )
+
+        divisiones_originales = {
+            division.participante_id: division.monto_asignado
+            for division in self.gasto.divisiones.all()
+        }
+
+        response = self.client.patch(
+            self.url_gasto(
+                self.grupo_activo,
+                self.gasto,
+            ),
+            {
+                "descripcion": "Cena actualizada",
+                "fecha_gasto": "2026-07-22",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.gasto.refresh_from_db()
+
+        self.assertEqual(
+            self.gasto.descripcion,
+            "Cena actualizada",
+        )
+
+        self.assertEqual(
+            self.gasto.fecha_gasto.isoformat(),
+            "2026-07-22",
+        )
+
+        self.assertSetEqual(
+            set(
+                self.gasto.participantes.values_list(
+                    "id",
+                    flat=True,
+                )
+            ),
+            participantes_originales,
+        )
+
+        self.assertDictEqual(
+            {
+                division.participante_id: division.monto_asignado
+                for division in self.gasto.divisiones.all()
+            },
+            divisiones_originales,
+        )
+
+    def test_editar_monto_recalcula_solo_participantes_originales(
+        self,
+    ):
+        participantes_originales = set(
+            self.gasto.participantes.values_list(
+                "id",
+                flat=True,
+            )
+        )
+
+        self.grupo_activo.participantes.add(
+            self.fernando
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo_activo,
+            usuario=self.fernando,
+        )
+
+        response = self.client.patch(
+            self.url_gasto(
+                self.grupo_activo,
+                self.gasto,
+            ),
+            {
+                "monto": "100.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        participantes_recalculados = set(
+            self.gasto.divisiones.values_list(
+                "participante_id",
+                flat=True,
+            )
+        )
+
+        self.assertSetEqual(
+            participantes_recalculados,
+            participantes_originales,
+        )
+
+        self.assertNotIn(
+            self.fernando.id,
+            participantes_recalculados,
+        )
+
+        montos = list(
+            self.gasto.divisiones
+            .order_by("participante_id")
+            .values_list(
+                "monto_asignado",
+                flat=True,
+            )
+        )
+
+        self.assertEqual(
+            montos,
+            [
+                Decimal("33.34"),
+                Decimal("33.33"),
+                Decimal("33.33"),
+            ],
+        )
+
+        self.assertEqual(
+            sum(montos, Decimal("0.00")),
+            Decimal("100.00"),
+        )
+
+    def test_retirar_integrante_despues_preserva_su_division_al_editar(
+        self,
+    ):
+        self.membresias_activas[
+            self.damarys.id
+        ].retirar()
+
+        self.grupo_activo.participantes.remove(
+            self.damarys
+        )
+
+        response = self.client.patch(
+            self.url_gasto(
+                self.grupo_activo,
+                self.gasto,
+            ),
+            {
+                "monto": "90.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertTrue(
+            self.gasto.participantes.filter(
+                id=self.damarys.id
+            ).exists()
+        )
+
+        self.assertTrue(
+            self.gasto.divisiones.filter(
+                participante=self.damarys
+            ).exists()
+        )
+
+        montos = list(
+            self.gasto.divisiones.values_list(
+                "monto_asignado",
+                flat=True,
+            )
+        )
+
+        self.assertEqual(
+            montos,
+            [
+                Decimal("30.00"),
+                Decimal("30.00"),
+                Decimal("30.00"),
+            ],
+        )
+
+    def test_campos_de_participantes_enviados_manualmente_son_ignorados(
+        self,
+    ):
+        response = self.client.patch(
+            self.url_gasto(
+                self.grupo_activo,
+                self.gasto,
+            ),
+            {
+                "monto": "90.00",
+                "participantes_ids": [
+                    self.carlita.id,
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertSetEqual(
+            set(
+                self.gasto.participantes.values_list(
+                    "id",
+                    flat=True,
+                )
+            ),
+            {
+                self.carlita.id,
+                self.andres.id,
+                self.damarys.id,
+            },
+        )
+
+        self.assertEqual(
+            self.gasto.divisiones.count(),
+            3,
+        )
+
+    def test_editar_monto_actualiza_total_comun_inmediatamente(self):
+        response = self.client.patch(
+            self.url_gasto(
+                self.grupo_activo,
+                self.gasto,
+            ),
+            {
+                "monto": "90.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            self.grupo_activo.total_gastos,
+            Decimal("105.00"),
+        )
+
+        detalle_grupo = self.client.get(
+            f"/api/grupos/{self.grupo_activo.id}/"
+        )
+
+        self.assertEqual(
+            Decimal(detalle_grupo.data["total_gastos"]),
+            Decimal("105.00"),
+        )
+
+    def test_participante_no_creador_no_puede_editar_ni_eliminar(
+        self,
+    ):
+        self.client.force_authenticate(
+            user=self.andres
+        )
+
+        response_patch = self.client.patch(
+            self.url_gasto(
+                self.grupo_activo,
+                self.gasto,
+            ),
+            {
+                "monto": "90.00",
+            },
+            format="json",
+        )
+
+        response_delete = self.client.delete(
+            self.url_gasto(
+                self.grupo_activo,
+                self.gasto,
+            )
+        )
+
+        self.assertEqual(
+            response_patch.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertEqual(
+            response_delete.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.gasto.refresh_from_db()
+
+        self.assertEqual(
+            self.gasto.monto,
+            Decimal("60.00"),
+        )
+
+        self.assertTrue(
+            Expense.objects.filter(
+                id=self.gasto.id
+            ).exists()
+        )
+
+    def test_eliminar_gasto_elimina_divisiones_y_actualiza_total(
+        self,
+    ):
+        gasto_id = self.gasto.id
+
+        divisiones_ids = list(
+            self.gasto.divisiones.values_list(
+                "id",
+                flat=True,
+            )
+        )
+
+        self.assertEqual(
+            self.grupo_activo.total_gastos,
+            Decimal("75.00"),
+        )
+
+        response = self.client.delete(
+            self.url_gasto(
+                self.grupo_activo,
+                self.gasto,
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertFalse(
+            Expense.objects.filter(
+                id=gasto_id
+            ).exists()
+        )
+
+        self.assertFalse(
+            ExpenseDivision.objects.filter(
+                id__in=divisiones_ids
+            ).exists()
+        )
+
+        self.assertEqual(
+            self.grupo_activo.total_gastos,
+            Decimal("15.00"),
+        )
+
+        detalle_grupo = self.client.get(
+            f"/api/grupos/{self.grupo_activo.id}/"
+        )
+
+        self.assertEqual(
+            Decimal(detalle_grupo.data["total_gastos"]),
+            Decimal("15.00"),
+        )
+
+    def test_actividad_cerrada_bloquea_edicion_y_eliminacion(
+        self,
+    ):
+        response_patch = self.client.patch(
+            self.url_gasto(
+                self.grupo_cerrado,
+                self.gasto_cerrado,
+            ),
+            {
+                "monto": "30.00",
+            },
+            format="json",
+        )
+
+        response_delete = self.client.delete(
+            self.url_gasto(
+                self.grupo_cerrado,
+                self.gasto_cerrado,
+            )
+        )
+
+        self.assertEqual(
+            response_patch.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response_delete.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.gasto_cerrado.refresh_from_db()
+
+        self.assertEqual(
+            self.gasto_cerrado.monto,
+            Decimal("20.00"),
+        )
+
+        self.assertTrue(
+            Expense.objects.filter(
+                id=self.gasto_cerrado.id
+            ).exists()
         )
