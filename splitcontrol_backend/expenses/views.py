@@ -3,10 +3,15 @@ from decimal import Decimal
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Sum
 from django.http import JsonResponse
 from django.utils import timezone
-from rest_framework import generics, permissions, status
+from rest_framework import (
+    generics,
+    parsers,
+    permissions,
+    status,
+)
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -14,6 +19,7 @@ from .models import (
     ActivityHistory,
     ClosingBalance,
     Debt,
+    DebtResolutionRequest,
     Expense,
     Group,
     GroupMembership,
@@ -28,6 +34,8 @@ from .services import (
 from .serializers import (
     ActivityHistorySerializer,
     ClosingBalanceSerializer,
+    DebtResolutionRequestCreateSerializer,
+    DebtResolutionRequestSerializer,
     DebtReviewAssignmentRequestSerializer,
     DebtReviewAssignmentSerializer,
     DebtSerializer,
@@ -35,6 +43,9 @@ from .serializers import (
     GroupMembershipSerializer,
     GroupSerializer,
     NotificationSerializer,
+    ParticipantDebtWarningRequestSerializer,
+    ParticipantDebtWarningSerializer,
+    ParticipantIncorporationSerializer,
     PaymentSerializer,
     UserSimpleSerializer,
 )
@@ -164,6 +175,20 @@ def registrar_evento_historial(
         descripcion=descripcion,
         datos=datos,
     )
+
+
+def respuesta_error_validacion(
+    error,
+):
+    if hasattr(
+        error,
+        "message_dict",
+    ):
+        return error.message_dict
+
+    return {
+        "error": error.messages
+    }
 
 
 def crear_notificaciones_nuevo_gasto(
@@ -550,14 +575,99 @@ class UserListView(generics.ListAPIView):
         )
 
 
+class ParticipantDebtWarningView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(
+        self,
+        request,
+        pk,
+        usuario_id,
+    ):
+        grupo = (
+            Group.objects
+            .filter(
+                id=pk,
+                creador=request.user,
+            )
+            .select_related("creador")
+            .first()
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o solo el "
+                        "creador puede consultar esta "
+                        "advertencia."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer_entrada = (
+            ParticipantDebtWarningRequestSerializer(
+                data={
+                    "usuario_id": usuario_id,
+                }
+            )
+        )
+
+        if not serializer_entrada.is_valid():
+            return Response(
+                serializer_entrada.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        usuario = User.objects.get(
+            id=serializer_entrada.validated_data[
+                "usuario_id"
+            ]
+        )
+
+        if GroupMembership.objects.filter(
+            grupo=grupo,
+            usuario=usuario,
+            activo=True,
+        ).exists():
+            return Response(
+                {
+                    "error": (
+                        "El usuario ya es participante "
+                        "activo del grupo."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        advertencia = (
+            grupo.obtener_advertencia_deudas_usuario(
+                usuario
+            )
+        )
+
+        return Response(
+            ParticipantDebtWarningSerializer(
+                advertencia
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+
 class AddParticipantView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
-        grupo = Group.objects.filter(
-            id=pk,
-            creador=request.user,
-        ).first()
+        grupo = (
+            Group.objects
+            .filter(
+                id=pk,
+                creador=request.user,
+            )
+            .select_related("creador")
+            .first()
+        )
 
         if not grupo:
             return Response(
@@ -567,127 +677,107 @@ class AddParticipantView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if grupo_esta_cerrado(grupo):
-            return Response(
-                {
-                    "error": (
-                        "No se pueden modificar participantes "
-                        "porque la actividad está cerrada."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
+        serializer_entrada = (
+            ParticipantIncorporationSerializer(
+                data=request.data
             )
-
-        usuario_id = request.data.get("usuario_id")
-
-        if not usuario_id:
-            return Response(
-                {
-                    "error": "Debe seleccionar un usuario."
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        usuario = User.objects.filter(
-            id=usuario_id
-        ).first()
-
-        if not usuario:
-            return Response(
-                {
-                    "error": "Usuario no encontrado."
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        membresia_activa = (
-            GroupMembership.objects
-            .filter(
-                grupo=grupo,
-                usuario=usuario,
-                activo=True,
-            )
-            .first()
         )
 
-        tenia_membresia_previa = (
-            GroupMembership.objects
-            .filter(
-                grupo=grupo,
-                usuario=usuario,
-                activo=False,
-            )
-            .exists()
-        )
-
-        if membresia_activa:
-            grupo.participantes.add(usuario)
-
+        if not serializer_entrada.is_valid():
             return Response(
-                {
-                    "error": (
-                        "El usuario ya es participante activo "
-                        "del grupo."
-                    )
-                },
+                serializer_entrada.errors,
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        with transaction.atomic():
-            membresia = GroupMembership.objects.create(
-                grupo=grupo,
+        usuario = User.objects.get(
+            id=serializer_entrada.validated_data[
+                "usuario_id"
+            ]
+        )
+
+        confirmar_deudas = (
+            serializer_entrada.validated_data[
+                "confirmar_deudas"
+            ]
+        )
+
+        try:
+            (
+                membresia,
+                advertencia,
+                incorporado,
+            ) = grupo.incorporar_participante(
                 usuario=usuario,
+                agregado_por=request.user,
+                confirmar_deudas=confirmar_deudas,
+                momento=timezone.now(),
             )
-
-            grupo.participantes.add(usuario)
-
-            tipo_evento = (
-                ActivityHistory
-                .TIPO_PARTICIPANTE_REINGRESO
-                if tenia_membresia_previa
-                else ActivityHistory
-                .TIPO_PARTICIPANTE_INGRESO
-            )
-
-            accion_descripcion = (
-                "reingresó a"
-                if tenia_membresia_previa
-                else "ingresó a"
-            )
-
-            registrar_evento_historial(
-                grupo=grupo,
-                usuario=request.user,
-                tipo_accion=tipo_evento,
-                descripcion=(
-                    f'{request.user.username} agregó a '
-                    f'{usuario.username}, quien '
-                    f'{accion_descripcion} la actividad '
-                    f'"{grupo.nombre}".'
+        except ValidationError as error:
+            return Response(
+                respuesta_error_validacion(
+                    error
                 ),
-                datos={
-                    "participante_id": usuario.id,
-                    "participante_username": (
-                        usuario.username
-                    ),
-                    "membresia_id": membresia.id,
-                    "es_reingreso": (
-                        tenia_membresia_previa
-                    ),
-                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer = GroupSerializer(grupo)
+        advertencia_serializada = (
+            ParticipantDebtWarningSerializer(
+                advertencia
+            ).data
+        )
+
+        if not incorporado:
+            return Response(
+                {
+                    "mensaje": (
+                        "El participante mantiene "
+                        "obligaciones pendientes. "
+                        "Debes confirmar o cancelar "
+                        "la incorporación."
+                    ),
+                    "incorporado": False,
+                    "requiere_confirmacion": True,
+                    "advertencia": (
+                        advertencia_serializada
+                    ),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        grupo.refresh_from_db()
+
+        mensaje = (
+            "Participante agregado correctamente "
+            "después de confirmar sus deudas pendientes."
+            if advertencia[
+                "tiene_deudas_pendientes"
+            ]
+            else (
+                "Participante agregado "
+                "correctamente."
+            )
+        )
 
         return Response(
             {
-                "mensaje": (
-                    "Participante agregado correctamente."
+                "mensaje": mensaje,
+                "incorporado": True,
+                "requiere_confirmacion": False,
+                "advertencia": (
+                    advertencia_serializada
                 ),
-                "grupo": serializer.data,
+                "grupo": GroupSerializer(
+                    grupo,
+                    context={
+                        "request": request,
+                    },
+                ).data,
                 "membresia": (
                     GroupMembershipSerializer(
-                        membresia
+                        membresia,
+                        context={
+                            "request": request,
+                        },
                     ).data
                 ),
             },
@@ -1997,6 +2087,338 @@ class GroupDebtView(APIView):
                     f"{total_deudas:.2f}"
                 ),
                 "deudas": deudas,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+
+class OwnDebtListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        deudas = (
+            Debt.objects
+            .filter(
+                participante=request.user,
+            )
+            .select_related(
+                "grupo",
+                "participante",
+                "saldo_cierre",
+            )
+            .prefetch_related(
+                "solicitudes_resolucion",
+                (
+                    "solicitudes_resolucion"
+                    "__solicitante"
+                ),
+                (
+                    "solicitudes_resolucion"
+                    "__revisado_por"
+                ),
+            )
+            .order_by(
+                "-fecha_generacion",
+                "-id",
+            )
+        )
+
+        total_deudas = deudas.count()
+
+        monto_total_pendiente = (
+            deudas.aggregate(
+                total=Sum(
+                    "saldo_pendiente"
+                )
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        mensaje = (
+            "Deudas propias consultadas correctamente."
+            if total_deudas > 0
+            else "No tienes deudas registradas."
+        )
+
+        return Response(
+            {
+                "mensaje": mensaje,
+                "total_deudas": total_deudas,
+                "monto_total_pendiente": (
+                    f"{monto_total_pendiente:.2f}"
+                ),
+                "deudas": DebtSerializer(
+                    deudas,
+                    many=True,
+                    context={
+                        "request": request,
+                    },
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class OwnDebtDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, deuda_id):
+        deuda = (
+            Debt.objects
+            .filter(
+                id=deuda_id,
+                participante=request.user,
+            )
+            .select_related(
+                "grupo",
+                "participante",
+                "saldo_cierre",
+            )
+            .prefetch_related(
+                "solicitudes_resolucion",
+                (
+                    "solicitudes_resolucion"
+                    "__solicitante"
+                ),
+                (
+                    "solicitudes_resolucion"
+                    "__revisado_por"
+                ),
+            )
+            .first()
+        )
+
+        if not deuda:
+            return Response(
+                {
+                    "error": (
+                        "Deuda no encontrada o no "
+                        "te pertenece."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(
+            {
+                "mensaje": (
+                    "Deuda propia consultada "
+                    "correctamente."
+                ),
+                "deuda": DebtSerializer(
+                    deuda,
+                    context={
+                        "request": request,
+                    },
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class OwnDebtResolutionRequestListCreateView(
+    APIView
+):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [
+        parsers.MultiPartParser,
+        parsers.FormParser,
+        parsers.JSONParser,
+    ]
+
+    def obtener_deuda(
+        self,
+        request,
+        deuda_id,
+    ):
+        return (
+            Debt.objects
+            .filter(
+                id=deuda_id,
+                participante=request.user,
+            )
+            .select_related(
+                "grupo",
+                "participante",
+                "saldo_cierre",
+            )
+            .first()
+        )
+
+    def get(self, request, deuda_id):
+        deuda = self.obtener_deuda(
+            request,
+            deuda_id,
+        )
+
+        if not deuda:
+            return Response(
+                {
+                    "error": (
+                        "Deuda no encontrada o no "
+                        "te pertenece."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        solicitudes = (
+            deuda.obtener_solicitudes_ordenadas()
+        )
+
+        total_solicitudes = solicitudes.count()
+
+        mensaje = (
+            "Solicitudes de resolución "
+            "consultadas correctamente."
+            if total_solicitudes > 0
+            else (
+                "Esta deuda todavía no tiene "
+                "solicitudes de resolución."
+            )
+        )
+
+        return Response(
+            {
+                "deuda_id": deuda.id,
+                "grupo_id": deuda.grupo_id,
+                "grupo_nombre": deuda.grupo_nombre,
+                "mensaje": mensaje,
+                "total_solicitudes": (
+                    total_solicitudes
+                ),
+                "tiene_solicitud_pendiente": (
+                    deuda.tiene_solicitud_pendiente
+                ),
+                "solicitudes": (
+                    DebtResolutionRequestSerializer(
+                        solicitudes,
+                        many=True,
+                        context={
+                            "request": request,
+                        },
+                    ).data
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request, deuda_id):
+        deuda = self.obtener_deuda(
+            request,
+            deuda_id,
+        )
+
+        if not deuda:
+            return Response(
+                {
+                    "error": (
+                        "Deuda no encontrada o no "
+                        "te pertenece."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = (
+            DebtResolutionRequestCreateSerializer(
+                data=request.data,
+                context={
+                    "request": request,
+                    "deuda": deuda,
+                },
+            )
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        solicitud = serializer.save()
+
+        deuda.refresh_from_db()
+
+        return Response(
+            {
+                "mensaje": (
+                    "Solicitud de resolución enviada "
+                    "correctamente."
+                ),
+                "solicitud": (
+                    DebtResolutionRequestSerializer(
+                        solicitud,
+                        context={
+                            "request": request,
+                        },
+                    ).data
+                ),
+                "deuda": DebtSerializer(
+                    deuda,
+                    context={
+                        "request": request,
+                    },
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class OwnDebtResolutionRequestDetailView(
+    APIView
+):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(
+        self,
+        request,
+        deuda_id,
+        solicitud_id,
+    ):
+        solicitud = (
+            DebtResolutionRequest.objects
+            .filter(
+                id=solicitud_id,
+                deuda_id=deuda_id,
+                deuda__participante=request.user,
+                solicitante=request.user,
+            )
+            .select_related(
+                "grupo",
+                "deuda",
+                "solicitante",
+                "revisado_por",
+            )
+            .first()
+        )
+
+        if not solicitud:
+            return Response(
+                {
+                    "error": (
+                        "Solicitud no encontrada o "
+                        "no te pertenece."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(
+            {
+                "mensaje": (
+                    "Solicitud de resolución "
+                    "consultada correctamente."
+                ),
+                "solicitud": (
+                    DebtResolutionRequestSerializer(
+                        solicitud,
+                        context={
+                            "request": request,
+                        },
+                    ).data
+                ),
             },
             status=status.HTTP_200_OK,
         )

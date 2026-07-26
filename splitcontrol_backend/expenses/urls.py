@@ -18,6 +18,11 @@ from .views import (
     NotificationListView,
     NotificationMarkAllReadView,
     NotificationMarkReadView,
+    OwnDebtDetailView,
+    OwnDebtListView,
+    OwnDebtResolutionRequestDetailView,
+    OwnDebtResolutionRequestListCreateView,
+    ParticipantDebtWarningView,
     PaymentCreateView,
     PaymentDetailView,
     RemoveParticipantView,
@@ -46,6 +51,14 @@ urlpatterns = [
         "usuarios/",
         UserListView.as_view(),
         name="listar_usuarios",
+    ),
+    path(
+        (
+            "grupos/<int:pk>/participantes/"
+            "<int:usuario_id>/advertencia-deudas/"
+        ),
+        ParticipantDebtWarningView.as_view(),
+        name="consultar_advertencia_deudas_participante",
     ),
     path(
         "grupos/<int:pk>/participantes/",
@@ -121,6 +134,29 @@ urlpatterns = [
         "grupos/<int:grupo_id>/pagos/<int:pago_id>/",
         PaymentDetailView.as_view(),
         name="detalle_pago",
+    ),
+    path(
+        "mis-deudas/",
+        OwnDebtListView.as_view(),
+        name="listar_deudas_propias",
+    ),
+    path(
+        "mis-deudas/<int:deuda_id>/",
+        OwnDebtDetailView.as_view(),
+        name="detalle_deuda_propia",
+    ),
+    path(
+        "mis-deudas/<int:deuda_id>/solicitudes/",
+        OwnDebtResolutionRequestListCreateView.as_view(),
+        name="listar_crear_solicitudes_deuda_propia",
+    ),
+    path(
+        (
+            "mis-deudas/<int:deuda_id>/solicitudes/"
+            "<int:solicitud_id>/"
+        ),
+        OwnDebtResolutionRequestDetailView.as_view(),
+        name="detalle_solicitud_deuda_propia",
     ),
     path(
         "notificaciones/",

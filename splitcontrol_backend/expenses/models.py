@@ -1,10 +1,36 @@
 from decimal import Decimal
+from pathlib import Path
+from uuid import uuid4
 
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
-from django.core.validators import MinValueValidator
+from django.core.validators import (
+    FileExtensionValidator,
+    MinValueValidator,
+)
 from django.db import models, transaction
 from django.utils import timezone
+
+
+
+def ruta_evidencia_resolucion(
+    instancia,
+    nombre_archivo,
+):
+    extension = Path(
+        nombre_archivo
+    ).suffix.lower()
+
+    nombre_seguro = (
+        f"{uuid4().hex}{extension}"
+    )
+
+    return (
+        "evidencias_resolucion/"
+        f"grupo_{instancia.grupo_id}/"
+        f"deuda_{instancia.deuda_id}/"
+        f"{nombre_seguro}"
+    )
 
 
 class Group(models.Model):
@@ -1022,6 +1048,224 @@ class Group(models.Model):
             "mantienen saldos pendientes."
         )
 
+    def obtener_advertencia_deudas_usuario(
+        self,
+        usuario,
+    ):
+        resumen = (
+            Debt.resumen_deudas_activas_usuario(
+                usuario
+            )
+        )
+
+        cantidad = resumen[
+            "cantidad_deudas_pendientes"
+        ]
+
+        monto_total = resumen[
+            "monto_total_pendiente"
+        ]
+
+        tiene_deudas = cantidad > 0
+
+        if tiene_deudas:
+            mensaje = (
+                f"{usuario.username} mantiene "
+                f"{cantidad} obligación(es) pendiente(s) "
+                f"por un total de ${monto_total:.2f}. "
+                "Debes confirmar si deseas continuar "
+                "con la incorporación."
+            )
+        else:
+            mensaje = (
+                f"{usuario.username} no mantiene "
+                "deudas pendientes."
+            )
+
+        return {
+            "usuario": {
+                "id": usuario.id,
+                "username": usuario.username,
+            },
+            "tiene_deudas_pendientes": tiene_deudas,
+            "requiere_confirmacion": tiene_deudas,
+            "cantidad_deudas_pendientes": cantidad,
+            "monto_total_pendiente": (
+                f"{monto_total:.2f}"
+            ),
+            "mensaje": mensaje,
+        }
+
+    @transaction.atomic
+    def incorporar_participante(
+        self,
+        usuario,
+        agregado_por,
+        confirmar_deudas=False,
+        momento=None,
+    ):
+        momento = momento or timezone.now()
+
+        if not self.pk:
+            raise ValidationError(
+                (
+                    "La actividad debe existir antes "
+                    "de agregar participantes."
+                )
+            )
+
+        if not usuario or not usuario.pk:
+            raise ValidationError({
+                "usuario_id": (
+                    "Debes seleccionar un usuario válido."
+                )
+            })
+
+        if not agregado_por or not agregado_por.pk:
+            raise ValidationError(
+                (
+                    "No se pudo identificar al usuario "
+                    "que realiza la incorporación."
+                )
+            )
+
+        grupo_bloqueado = (
+            Group.objects
+            .select_for_update()
+            .select_related("creador")
+            .get(pk=self.pk)
+        )
+
+        if grupo_bloqueado.creador_id != agregado_por.id:
+            raise ValidationError({
+                "usuario_id": (
+                    "Solo el creador de la actividad puede "
+                    "agregar participantes."
+                )
+            })
+
+        if (
+            grupo_bloqueado.estado
+            == Group.ESTADO_CERRADA
+        ):
+            raise ValidationError({
+                "usuario_id": (
+                    "No se pueden modificar participantes "
+                    "porque la actividad está cerrada."
+                )
+            })
+
+        if GroupMembership.objects.filter(
+            grupo=grupo_bloqueado,
+            usuario=usuario,
+            activo=True,
+        ).exists():
+            raise ValidationError({
+                "usuario_id": (
+                    "El usuario ya es participante activo "
+                    "del grupo."
+                )
+            })
+
+        advertencia = (
+            grupo_bloqueado
+            .obtener_advertencia_deudas_usuario(
+                usuario
+            )
+        )
+
+        if (
+            advertencia["requiere_confirmacion"]
+            and not confirmar_deudas
+        ):
+            return None, advertencia, False
+
+        tenia_membresia_previa = (
+            GroupMembership.objects
+            .filter(
+                grupo=grupo_bloqueado,
+                usuario=usuario,
+                activo=False,
+            )
+            .exists()
+        )
+
+        membresia = GroupMembership.objects.create(
+            grupo=grupo_bloqueado,
+            usuario=usuario,
+            fecha_ingreso=momento,
+        )
+
+        grupo_bloqueado.participantes.add(
+            usuario
+        )
+
+        tipo_accion = (
+            ActivityHistory
+            .TIPO_PARTICIPANTE_REINGRESO
+            if tenia_membresia_previa
+            else ActivityHistory
+            .TIPO_PARTICIPANTE_INGRESO
+        )
+
+        accion = (
+            "reingresó a"
+            if tenia_membresia_previa
+            else "ingresó a"
+        )
+
+        ActivityHistory.registrar(
+            grupo=grupo_bloqueado,
+            usuario=agregado_por,
+            tipo_accion=tipo_accion,
+            descripcion=(
+                f"{agregado_por.username} agregó a "
+                f"{usuario.username}, quien {accion} "
+                f'la actividad '
+                f'"{grupo_bloqueado.nombre}".'
+            ),
+            datos={
+                "participante_id": usuario.id,
+                "participante_username": (
+                    usuario.username
+                ),
+                "membresia_id": membresia.id,
+                "es_reingreso": (
+                    tenia_membresia_previa
+                ),
+                "tenia_deudas_pendientes": (
+                    advertencia[
+                        "tiene_deudas_pendientes"
+                    ]
+                ),
+                "cantidad_deudas_pendientes": (
+                    advertencia[
+                        "cantidad_deudas_pendientes"
+                    ]
+                ),
+                "monto_total_pendiente": (
+                    advertencia[
+                        "monto_total_pendiente"
+                    ]
+                ),
+                "confirmacion_del_creador": bool(
+                    advertencia[
+                        "tiene_deudas_pendientes"
+                    ]
+                    and confirmar_deudas
+                ),
+                "fecha_incorporacion": (
+                    momento.isoformat()
+                ),
+            },
+        )
+
+        self.participantes.add(
+            usuario
+        )
+
+        return membresia, advertencia, True
+
     @property
     def total_gastos(self):
         total = self.gastos.aggregate(
@@ -1765,12 +2009,570 @@ class Debt(models.Model):
             ),
         ]
 
+    @classmethod
+    def deudas_activas_usuario(
+        cls,
+        usuario,
+    ):
+        if not usuario or not usuario.pk:
+            return cls.objects.none()
+
+        return (
+            cls.objects
+            .filter(
+                participante=usuario,
+                saldo_pendiente__gt=Decimal("0.00"),
+                estado__in=[
+                    cls.ESTADO_PENDIENTE,
+                    cls.ESTADO_EN_REVISION,
+                    cls.ESTADO_RECHAZADA,
+                ],
+            )
+            .select_related(
+                "grupo",
+                "participante",
+                "saldo_cierre",
+            )
+            .order_by(
+                "-fecha_generacion",
+                "-id",
+            )
+        )
+
+    @classmethod
+    def resumen_deudas_activas_usuario(
+        cls,
+        usuario,
+    ):
+        deudas = cls.deudas_activas_usuario(
+            usuario
+        )
+
+        monto_total = (
+            deudas.aggregate(
+                total=models.Sum(
+                    "saldo_pendiente"
+                )
+            )["total"]
+            or Decimal("0.00")
+        ).quantize(
+            Decimal("0.01")
+        )
+
+        return {
+            "cantidad_deudas_pendientes": (
+                deudas.count()
+            ),
+            "monto_total_pendiente": monto_total,
+        }
+
+    @property
+    def esta_activa(self):
+        return bool(
+            self.saldo_pendiente
+            > Decimal("0.00")
+            and self.estado
+            in [
+                self.ESTADO_PENDIENTE,
+                self.ESTADO_EN_REVISION,
+                self.ESTADO_RECHAZADA,
+            ]
+        )
+
+    @property
+    def solicitud_pendiente_revision(self):
+        if not self.pk:
+            return None
+
+        return (
+            self.solicitudes_resolucion
+            .filter(
+                estado=(
+                    DebtResolutionRequest
+                    .ESTADO_PENDIENTE_REVISION
+                )
+            )
+            .order_by(
+                "-fecha_envio",
+                "-id",
+            )
+            .first()
+        )
+
+    @property
+    def tiene_solicitud_pendiente(self):
+        return bool(
+            self.solicitud_pendiente_revision
+        )
+
+    def obtener_solicitudes_ordenadas(self):
+        if not self.pk:
+            return (
+                DebtResolutionRequest
+                .objects.none()
+            )
+
+        return (
+            self.solicitudes_resolucion
+            .select_related(
+                "grupo",
+                "deuda",
+                "solicitante",
+                "revisado_por",
+            )
+            .order_by(
+                "-fecha_envio",
+                "-id",
+            )
+        )
+
     def __str__(self):
         return (
             f"{self.participante_username} debe "
             f"${self.saldo_pendiente} en "
             f"{self.grupo_nombre}"
         )
+
+
+class DebtResolutionRequest(models.Model):
+    ESTADO_PENDIENTE_REVISION = (
+        "pendiente_revision"
+    )
+    ESTADO_APROBADA = "aprobada"
+    ESTADO_RECHAZADA = "rechazada"
+
+    ESTADOS = [
+        (
+            ESTADO_PENDIENTE_REVISION,
+            "Pendiente de revisión",
+        ),
+        (
+            ESTADO_APROBADA,
+            "Aprobada",
+        ),
+        (
+            ESTADO_RECHAZADA,
+            "Rechazada",
+        ),
+    ]
+
+    DECISION_APROBADA = "aprobada"
+    DECISION_RECHAZADA = "rechazada"
+
+    DECISIONES = [
+        (
+            DECISION_APROBADA,
+            "Aprobada",
+        ),
+        (
+            DECISION_RECHAZADA,
+            "Rechazada",
+        ),
+    ]
+
+    deuda = models.ForeignKey(
+        Debt,
+        on_delete=models.PROTECT,
+        related_name="solicitudes_resolucion",
+    )
+
+    grupo = models.ForeignKey(
+        Group,
+        on_delete=models.PROTECT,
+        related_name="solicitudes_resolucion_deudas",
+    )
+
+    grupo_nombre = models.CharField(
+        max_length=100,
+    )
+
+    solicitante = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="solicitudes_resolucion_deudas",
+    )
+
+    solicitante_username = models.CharField(
+        max_length=150,
+    )
+
+    descripcion = models.TextField()
+
+    evidencia = models.FileField(
+        upload_to=ruta_evidencia_resolucion,
+        validators=[
+            FileExtensionValidator(
+                allowed_extensions=[
+                    "pdf",
+                    "jpg",
+                    "jpeg",
+                    "png",
+                ],
+                message=(
+                    "La evidencia debe estar en formato "
+                    "PDF, JPG, JPEG o PNG."
+                ),
+            )
+        ],
+    )
+
+    evidencia_nombre_original = models.CharField(
+        max_length=255,
+    )
+
+    estado = models.CharField(
+        max_length=25,
+        choices=ESTADOS,
+        default=ESTADO_PENDIENTE_REVISION,
+    )
+
+    decision = models.CharField(
+        max_length=15,
+        choices=DECISIONES,
+        null=True,
+        blank=True,
+    )
+
+    observacion_revision = models.TextField(
+        blank=True,
+        default="",
+    )
+
+    revisado_por = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="solicitudes_deuda_revisadas",
+        null=True,
+        blank=True,
+    )
+
+    revisado_por_username = models.CharField(
+        max_length=150,
+        blank=True,
+        default="",
+    )
+
+    fecha_envio = models.DateTimeField(
+        default=timezone.now,
+        editable=False,
+    )
+
+    fecha_revision = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+    )
+
+    fecha_actualizacion = models.DateTimeField(
+        auto_now=True,
+    )
+
+    class Meta:
+        ordering = [
+            "-fecha_envio",
+            "-id",
+        ]
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["deuda"],
+                condition=models.Q(
+                    estado="pendiente_revision"
+                ),
+                name=(
+                    "solicitud_pendiente_"
+                    "unica_por_deuda"
+                ),
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        estado="pendiente_revision",
+                        decision__isnull=True,
+                        revisado_por__isnull=True,
+                        fecha_revision__isnull=True,
+                    )
+                    | models.Q(
+                        estado="aprobada",
+                        decision="aprobada",
+                        revisado_por__isnull=False,
+                        fecha_revision__isnull=False,
+                    )
+                    | models.Q(
+                        estado="rechazada",
+                        decision="rechazada",
+                        revisado_por__isnull=False,
+                        fecha_revision__isnull=False,
+                    )
+                ),
+                name=(
+                    "solicitud_revision_"
+                    "estado_consistente"
+                ),
+            ),
+        ]
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "deuda",
+                    "estado",
+                    "-fecha_envio",
+                ],
+                name="sol_deuda_estado_fecha_idx",
+            ),
+            models.Index(
+                fields=[
+                    "solicitante",
+                    "-fecha_envio",
+                ],
+                name="sol_user_fecha_idx",
+            ),
+            models.Index(
+                fields=[
+                    "grupo",
+                    "estado",
+                ],
+                name="sol_grupo_estado_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"Solicitud de "
+            f"{self.solicitante_username} - "
+            f"{self.grupo_nombre} - "
+            f"{self.get_estado_display()}"
+        )
+
+    def clean(self):
+        super().clean()
+
+        errores = {}
+
+        if (
+            self.deuda_id
+            and self.grupo_id
+            and self.deuda.grupo_id
+            != self.grupo_id
+        ):
+            errores["grupo"] = (
+                "La actividad seleccionada no corresponde "
+                "a la deuda."
+            )
+
+        if (
+            self.deuda_id
+            and self.solicitante_id
+            and self.deuda.participante_id
+            != self.solicitante_id
+        ):
+            errores["solicitante"] = (
+                "Solo el titular de la deuda puede "
+                "enviar una solicitud de resolución."
+            )
+
+        descripcion = (
+            self.descripcion or ""
+        ).strip()
+
+        if not descripcion:
+            errores["descripcion"] = (
+                "La descripción o explicación "
+                "es obligatoria."
+            )
+
+        if errores:
+            raise ValidationError(
+                errores
+            )
+
+        self.descripcion = descripcion
+
+    @property
+    def pendiente_revision(self):
+        return (
+            self.estado
+            == self.ESTADO_PENDIENTE_REVISION
+        )
+
+    @property
+    def puede_editarse(self):
+        return self.pendiente_revision
+
+    @classmethod
+    @transaction.atomic
+    def crear_para_deuda(
+        cls,
+        deuda,
+        solicitante,
+        descripcion,
+        evidencia,
+        momento=None,
+    ):
+        momento = momento or timezone.now()
+
+        if not deuda or not deuda.pk:
+            raise ValidationError({
+                "deuda": (
+                    "Debes seleccionar una deuda válida."
+                )
+            })
+
+        if not solicitante or not solicitante.pk:
+            raise ValidationError(
+                (
+                    "No se pudo identificar al usuario "
+                    "que envía la solicitud."
+                )
+            )
+
+        deuda_bloqueada = (
+            Debt.objects
+            .select_for_update()
+            .select_related(
+                "grupo",
+                "participante",
+            )
+            .get(pk=deuda.pk)
+        )
+
+        if (
+            deuda_bloqueada.participante_id
+            != solicitante.id
+        ):
+            raise ValidationError({
+                "deuda": (
+                    "Solo puedes enviar solicitudes "
+                    "sobre tus propias deudas."
+                )
+            })
+
+        if (
+            deuda_bloqueada.estado
+            != Debt.ESTADO_PENDIENTE
+            or deuda_bloqueada.saldo_pendiente
+            <= Decimal("0.00")
+        ):
+            raise ValidationError({
+                "deuda": (
+                    "La deuda debe encontrarse pendiente "
+                    "y mantener saldo para enviar "
+                    "una solicitud."
+                )
+            })
+
+        if not (descripcion or "").strip():
+            raise ValidationError({
+                "descripcion": (
+                    "La descripción o explicación "
+                    "es obligatoria."
+                )
+            })
+
+        if not evidencia:
+            raise ValidationError({
+                "evidencia": (
+                    "Debes adjuntar una evidencia."
+                )
+            })
+
+        if cls.objects.filter(
+            deuda=deuda_bloqueada,
+            estado=cls.ESTADO_PENDIENTE_REVISION,
+        ).exists():
+            raise ValidationError({
+                "deuda": (
+                    "Ya existe una solicitud pendiente "
+                    "de revisión para esta deuda."
+                )
+            })
+
+        solicitud = cls(
+            deuda=deuda_bloqueada,
+            grupo=deuda_bloqueada.grupo,
+            grupo_nombre=(
+                deuda_bloqueada.grupo_nombre
+            ),
+            solicitante=solicitante,
+            solicitante_username=(
+                solicitante.username
+            ),
+            descripcion=descripcion.strip(),
+            evidencia=evidencia,
+            evidencia_nombre_original=(
+                getattr(
+                    evidencia,
+                    "name",
+                    "",
+                )
+            ),
+            estado=cls.ESTADO_PENDIENTE_REVISION,
+            fecha_envio=momento,
+        )
+
+        solicitud.full_clean()
+
+        try:
+            solicitud.save()
+
+            ActivityHistory.registrar(
+                grupo=deuda_bloqueada.grupo,
+                usuario=solicitante,
+                tipo_accion=(
+                    ActivityHistory
+                    .TIPO_SOLICITUD_RESOLUCION_CREADA
+                ),
+                descripcion=(
+                    f"{solicitante.username} envió una "
+                    "solicitud de resolución para su deuda "
+                    f'en la actividad '
+                    f'"{deuda_bloqueada.grupo_nombre}".'
+                ),
+                datos={
+                    "solicitud_id": solicitud.id,
+                    "deuda_id": deuda_bloqueada.id,
+                    "grupo_id": (
+                        deuda_bloqueada.grupo_id
+                    ),
+                    "grupo_nombre": (
+                        deuda_bloqueada.grupo_nombre
+                    ),
+                    "solicitante_id": solicitante.id,
+                    "solicitante_username": (
+                        solicitante.username
+                    ),
+                    "descripcion": (
+                        solicitud.descripcion
+                    ),
+                    "evidencia_nombre_original": (
+                        solicitud
+                        .evidencia_nombre_original
+                    ),
+                    "estado": solicitud.estado,
+                    "fecha_envio": (
+                        momento.isoformat()
+                    ),
+                },
+            )
+        except Exception:
+            try:
+                if (
+                    solicitud.evidencia
+                    and solicitud.evidencia.name
+                ):
+                    (
+                        solicitud.evidencia.storage
+                        .delete(
+                            solicitud.evidencia.name
+                        )
+                    )
+            except Exception:
+                pass
+
+            raise
+
+        return solicitud
 
 
 class Notification(models.Model):
@@ -1890,6 +2692,9 @@ class ActivityHistory(models.Model):
     TIPO_CASO_TODOS_DEBEN_DETECTADO = (
         "caso_todos_deben_detectado"
     )
+    TIPO_SOLICITUD_RESOLUCION_CREADA = (
+        "solicitud_resolucion_creada"
+    )
 
     TIPOS_ACCION = [
         (
@@ -1943,6 +2748,10 @@ class ActivityHistory(models.Model):
         (
             TIPO_CASO_TODOS_DEBEN_DETECTADO,
             "Caso excepcional: todos deben",
+        ),
+        (
+            TIPO_SOLICITUD_RESOLUCION_CREADA,
+            "Solicitud de resolución creada",
         ),
     ]
 
