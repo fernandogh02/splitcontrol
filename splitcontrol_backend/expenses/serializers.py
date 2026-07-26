@@ -6,6 +6,7 @@ from django.db.models import Sum
 from rest_framework import serializers
 
 from .models import (
+    ActivityHistory,
     Expense,
     ExpenseDivision,
     Group,
@@ -461,6 +462,37 @@ class PaymentSerializer(
             })
 
         return attrs
+
+
+class ActivityHistorySerializer(
+    serializers.ModelSerializer
+):
+    grupo_id = serializers.IntegerField(
+        source="grupo.id",
+        read_only=True,
+    )
+
+    tipo_accion_display = serializers.CharField(
+        source="get_tipo_accion_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = ActivityHistory
+        fields = [
+            "id",
+            "grupo_id",
+            "grupo_nombre",
+            "usuario",
+            "usuario_username",
+            "tipo_accion",
+            "tipo_accion_display",
+            "descripcion",
+            "datos",
+            "fecha_evento",
+        ]
+
+        read_only_fields = fields
 
 
 class NotificationSerializer(

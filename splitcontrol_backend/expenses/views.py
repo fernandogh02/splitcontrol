@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import (
+    ActivityHistory,
     Expense,
     Group,
     GroupMembership,
@@ -22,6 +23,7 @@ from .services import (
     calcular_resumen_economico_grupo,
 )
 from .serializers import (
+    ActivityHistorySerializer,
     ExpenseSerializer,
     GroupMembershipSerializer,
     GroupSerializer,
@@ -70,6 +72,91 @@ def grupo_esta_cerrado(grupo):
 
 def grupo_esta_activo(grupo):
     return grupo.estado == Group.ESTADO_ACTIVA
+
+
+def valor_historial(valor):
+    if valor is None:
+        return None
+
+    if isinstance(valor, Decimal):
+        return f"{valor:.2f}"
+
+    if hasattr(valor, "isoformat"):
+        return valor.isoformat()
+
+    return valor
+
+
+def datos_grupo_historial(grupo):
+    return {
+        "grupo_id": grupo.id,
+        "nombre": grupo.nombre,
+        "descripcion": grupo.descripcion,
+        "fecha_inicio": valor_historial(
+            grupo.fecha_inicio
+        ),
+        "fecha_fin": valor_historial(
+            grupo.fecha_fin
+        ),
+        "estado": grupo.estado,
+    }
+
+
+def datos_gasto_historial(gasto):
+    return {
+        "gasto_id": gasto.id,
+        "descripcion": gasto.descripcion,
+        "monto": f"{gasto.monto:.2f}",
+        "fecha_gasto": valor_historial(
+            gasto.fecha_gasto
+        ),
+        "registrado_por": (
+            gasto.registrado_por.username
+            if gasto.registrado_por
+            else None
+        ),
+        "participantes": list(
+            gasto.participantes
+            .order_by("id")
+            .values_list(
+                "username",
+                flat=True,
+            )
+        ),
+    }
+
+
+def datos_pago_historial(pago):
+    return {
+        "pago_id": pago.id,
+        "pagador_id": pago.pagador_id,
+        "pagador_username": pago.pagador.username,
+        "monto": f"{pago.monto:.2f}",
+        "fecha_pago": valor_historial(
+            pago.fecha_pago
+        ),
+        "registrado_por": (
+            pago.registrado_por.username
+            if pago.registrado_por
+            else None
+        ),
+    }
+
+
+def registrar_evento_historial(
+    grupo,
+    usuario,
+    tipo_accion,
+    descripcion,
+    datos=None,
+):
+    return ActivityHistory.registrar(
+        grupo=grupo,
+        usuario=usuario,
+        tipo_accion=tipo_accion,
+        descripcion=descripcion,
+        datos=datos,
+    )
 
 
 def crear_notificaciones_nuevo_gasto(
@@ -138,9 +225,27 @@ class GroupListCreateView(generics.ListCreateAPIView):
             self.request.user
         )
 
-        GroupMembership.objects.create(
+        membresia_creador = GroupMembership.objects.create(
             grupo=grupo,
             usuario=self.request.user,
+        )
+
+        registrar_evento_historial(
+            grupo=grupo,
+            usuario=self.request.user,
+            tipo_accion=(
+                ActivityHistory.TIPO_ACTIVIDAD_CREADA
+            ),
+            descripcion=(
+                f'{self.request.user.username} creó la '
+                f'actividad "{grupo.nombre}".'
+            ),
+            datos={
+                **datos_grupo_historial(grupo),
+                "membresia_creador_id": (
+                    membresia_creador.id
+                ),
+            },
         )
 
 
@@ -157,6 +262,53 @@ class GroupDetailView(generics.RetrieveUpdateDestroyAPIView):
         return Group.objects.filter(
             creador=self.request.user
         )
+
+    @transaction.atomic
+    def perform_update(self, serializer):
+        grupo = serializer.instance
+
+        datos_antes = datos_grupo_historial(
+            grupo
+        )
+
+        campos_solicitados = list(
+            serializer.validated_data.keys()
+        )
+
+        grupo_actualizado = serializer.save()
+
+        datos_despues = datos_grupo_historial(
+            grupo_actualizado
+        )
+
+        campos_modificados = [
+            campo
+            for campo in campos_solicitados
+            if datos_antes.get(campo)
+            != datos_despues.get(campo)
+        ]
+
+        if campos_modificados:
+            registrar_evento_historial(
+                grupo=grupo_actualizado,
+                usuario=self.request.user,
+                tipo_accion=(
+                    ActivityHistory
+                    .TIPO_ACTIVIDAD_ACTUALIZADA
+                ),
+                descripcion=(
+                    f'{self.request.user.username} actualizó '
+                    f'la actividad '
+                    f'"{grupo_actualizado.nombre}".'
+                ),
+                datos={
+                    "campos_modificados": (
+                        campos_modificados
+                    ),
+                    "antes": datos_antes,
+                    "despues": datos_despues,
+                },
+            )
 
 
 class UserListView(generics.ListAPIView):
@@ -231,6 +383,16 @@ class AddParticipantView(APIView):
             .first()
         )
 
+        tenia_membresia_previa = (
+            GroupMembership.objects
+            .filter(
+                grupo=grupo,
+                usuario=usuario,
+                activo=False,
+            )
+            .exists()
+        )
+
         if membresia_activa:
             grupo.participantes.add(usuario)
 
@@ -251,6 +413,42 @@ class AddParticipantView(APIView):
             )
 
             grupo.participantes.add(usuario)
+
+            tipo_evento = (
+                ActivityHistory
+                .TIPO_PARTICIPANTE_REINGRESO
+                if tenia_membresia_previa
+                else ActivityHistory
+                .TIPO_PARTICIPANTE_INGRESO
+            )
+
+            accion_descripcion = (
+                "reingresó a"
+                if tenia_membresia_previa
+                else "ingresó a"
+            )
+
+            registrar_evento_historial(
+                grupo=grupo,
+                usuario=request.user,
+                tipo_accion=tipo_evento,
+                descripcion=(
+                    f'{request.user.username} agregó a '
+                    f'{usuario.username}, quien '
+                    f'{accion_descripcion} la actividad '
+                    f'"{grupo.nombre}".'
+                ),
+                datos={
+                    "participante_id": usuario.id,
+                    "participante_username": (
+                        usuario.username
+                    ),
+                    "membresia_id": membresia.id,
+                    "es_reingreso": (
+                        tenia_membresia_previa
+                    ),
+                },
+            )
 
         serializer = GroupSerializer(grupo)
 
@@ -344,6 +542,30 @@ class RemoveParticipantView(APIView):
         with transaction.atomic():
             membresia.retirar()
             grupo.participantes.remove(usuario)
+
+            registrar_evento_historial(
+                grupo=grupo,
+                usuario=request.user,
+                tipo_accion=(
+                    ActivityHistory
+                    .TIPO_PARTICIPANTE_RETIRO
+                ),
+                descripcion=(
+                    f'{request.user.username} retiró a '
+                    f'{usuario.username} de la actividad '
+                    f'"{grupo.nombre}".'
+                ),
+                datos={
+                    "participante_id": usuario.id,
+                    "participante_username": (
+                        usuario.username
+                    ),
+                    "membresia_id": membresia.id,
+                    "fecha_salida": valor_historial(
+                        membresia.fecha_salida
+                    ),
+                },
+            )
 
         serializer = GroupSerializer(grupo)
 
@@ -530,6 +752,23 @@ class ExpenseCreateView(APIView):
                 )
             )
 
+            registrar_evento_historial(
+                grupo=grupo,
+                usuario=request.user,
+                tipo_accion=(
+                    ActivityHistory.TIPO_GASTO_CREADO
+                ),
+                descripcion=(
+                    f'{request.user.username} registró el '
+                    f'gasto "{gasto.descripcion}" por '
+                    f'${gasto.monto:.2f} en la actividad '
+                    f'"{grupo.nombre}".'
+                ),
+                datos=datos_gasto_historial(
+                    gasto
+                ),
+            )
+
         gasto_actualizado = (
             Expense.objects
             .select_related(
@@ -689,7 +928,53 @@ class ExpenseDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        gasto_actualizado = serializer.save()
+        datos_antes = datos_gasto_historial(
+            gasto
+        )
+
+        with transaction.atomic():
+            gasto_actualizado = serializer.save()
+
+            datos_despues = datos_gasto_historial(
+                gasto_actualizado
+            )
+
+            campos_modificados = [
+                campo
+                for campo in [
+                    "descripcion",
+                    "monto",
+                    "fecha_gasto",
+                ]
+                if datos_antes.get(campo)
+                != datos_despues.get(campo)
+            ]
+
+            if campos_modificados:
+                registrar_evento_historial(
+                    grupo=grupo,
+                    usuario=request.user,
+                    tipo_accion=(
+                        ActivityHistory
+                        .TIPO_GASTO_ACTUALIZADO
+                    ),
+                    descripcion=(
+                        f'{request.user.username} actualizó '
+                        f'el gasto '
+                        f'"{gasto_actualizado.descripcion}" '
+                        f'en la actividad "{grupo.nombre}".'
+                    ),
+                    datos={
+                        "gasto_id": (
+                            gasto_actualizado.id
+                        ),
+                        "campos_modificados": (
+                            campos_modificados
+                        ),
+                        "antes": datos_antes,
+                        "despues": datos_despues,
+                    },
+                )
 
         gasto_actualizado = (
             Expense.objects
@@ -761,8 +1046,30 @@ class ExpenseDetailView(APIView):
             )
 
         gasto_eliminado_id = gasto.id
+        datos_gasto_eliminado = (
+            datos_gasto_historial(gasto)
+        )
 
-        gasto.delete()
+        with transaction.atomic():
+            gasto.delete()
+
+            registrar_evento_historial(
+                grupo=grupo,
+                usuario=request.user,
+                tipo_accion=(
+                    ActivityHistory
+                    .TIPO_GASTO_ELIMINADO
+                ),
+                descripcion=(
+                    f'{request.user.username} eliminó el '
+                    f'gasto '
+                    f'"{datos_gasto_eliminado["descripcion"]}" '
+                    f'por '
+                    f'${datos_gasto_eliminado["monto"]} de la '
+                    f'actividad "{grupo.nombre}".'
+                ),
+                datos=datos_gasto_eliminado,
+            )
 
         return Response(
             {
@@ -1144,6 +1451,22 @@ class PaymentCreateView(APIView):
                 registrado_por=request.user,
             )
 
+            registrar_evento_historial(
+                grupo=grupo,
+                usuario=request.user,
+                tipo_accion=(
+                    ActivityHistory.TIPO_PAGO_CREADO
+                ),
+                descripcion=(
+                    f'{request.user.username} registró un '
+                    f'pago de ${pago.monto:.2f} en la '
+                    f'actividad "{grupo.nombre}".'
+                ),
+                datos=datos_pago_historial(
+                    pago
+                ),
+            )
+
         pago_registrado = (
             Payment.objects
             .select_related(
@@ -1219,6 +1542,66 @@ class PaymentDetailView(APIView):
                 "estado_actividad": grupo.estado,
                 "pago": PaymentSerializer(
                     pago
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ActivityHistoryListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar su historial."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        eventos = (
+            ActivityHistory.objects
+            .filter(grupo=grupo)
+            .select_related(
+                "grupo",
+                "usuario",
+            )
+            .order_by(
+                "-fecha_evento",
+                "-id",
+            )
+        )
+
+        total_eventos = eventos.count()
+
+        mensaje = (
+            "Historial consultado correctamente."
+            if total_eventos > 0
+            else (
+                "Todavía no existen eventos registrados "
+                "en esta actividad."
+            )
+        )
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "estado_actividad": grupo.estado,
+                "total_eventos": total_eventos,
+                "mensaje": mensaje,
+                "eventos": ActivityHistorySerializer(
+                    eventos,
+                    many=True,
                 ).data,
             },
             status=status.HTTP_200_OK,
