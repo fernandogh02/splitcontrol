@@ -10,6 +10,7 @@ from .models import (
     ExpenseDivision,
     Group,
     GroupMembership,
+    Notification,
     Payment,
 )
 
@@ -460,3 +461,36 @@ class PaymentSerializer(
             })
 
         return attrs
+
+
+class NotificationSerializer(
+    serializers.ModelSerializer
+):
+    usuario = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    estado = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notification
+        fields = [
+            "id",
+            "usuario",
+            "titulo",
+            "mensaje",
+            "enlace",
+            "leida",
+            "estado",
+            "fecha_creacion",
+            "fecha_lectura",
+        ]
+
+        read_only_fields = fields
+
+    def get_estado(self, obj):
+        return (
+            "leida"
+            if obj.leida
+            else "no_leida"
+        )

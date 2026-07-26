@@ -12,6 +12,7 @@ from expenses.models import (
     ExpenseDivision,
     Group,
     GroupMembership,
+    Notification,
     Payment,
 )
 
@@ -4355,4 +4356,452 @@ class ListarDetallePagosSC53Test(APITestCase):
             response.data["mensaje"],
             "Todavía no existen pagos registrados.",
         )
+
+
+class CentroNotificacionesSC54Test(APITestCase):
+
+    def setUp(self):
+        self.damarys = User.objects.create_user(
+            username="damarys_sc54",
+            email="damarys_sc54@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc54",
+            email="carlita_sc54@example.com",
+            password="Prueba123",
+        )
+
+        ahora = timezone.now()
+
+        self.notificacion_antigua = Notification.objects.create(
+            usuario=self.damarys,
+            titulo="Actividad creada",
+            mensaje=(
+                "La actividad Viaje SC-54 fue creada "
+                "correctamente."
+            ),
+            enlace="/grupos/10",
+        )
+
+        self.notificacion_leida = Notification.objects.create(
+            usuario=self.damarys,
+            titulo="Pago registrado",
+            mensaje="Tu aporte fue registrado correctamente.",
+            enlace="/grupos/10",
+            leida=True,
+            fecha_lectura=ahora - timedelta(minutes=20),
+        )
+
+        self.notificacion_reciente = Notification.objects.create(
+            usuario=self.damarys,
+            titulo="Nuevo gasto",
+            mensaje=(
+                "Se registró un nuevo gasto en la actividad."
+            ),
+            enlace="/grupos/10",
+        )
+
+        Notification.objects.filter(
+            id=self.notificacion_antigua.id
+        ).update(
+            fecha_creacion=ahora - timedelta(hours=3)
+        )
+
+        Notification.objects.filter(
+            id=self.notificacion_leida.id
+        ).update(
+            fecha_creacion=ahora - timedelta(hours=2)
+        )
+
+        Notification.objects.filter(
+            id=self.notificacion_reciente.id
+        ).update(
+            fecha_creacion=ahora - timedelta(hours=1)
+        )
+
+        self.notificacion_ajena = Notification.objects.create(
+            usuario=self.carlita,
+            titulo="Notificación privada de Carlita",
+            mensaje="Este mensaje solo pertenece a Carlita.",
+            enlace="/grupos/20",
+        )
+
+        self.url_listado = "/api/notificaciones/"
+        self.url_marcar_todas = (
+            "/api/notificaciones/marcar-todas-leidas/"
+        )
+
+        self.client.force_authenticate(
+            user=self.damarys
+        )
+
+    def url_marcar_leida(self, notificacion):
+        return (
+            f"/api/notificaciones/"
+            f"{notificacion.id}/leer/"
+        )
+
+    def test_usuario_autenticado_consulta_su_centro_personal(self):
+        response = self.client.get(
+            self.url_listado
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["total_notificaciones"],
+            3,
+        )
+
+        self.assertEqual(
+            response.data["no_leidas"],
+            2,
+        )
+
+        usuarios = {
+            item["usuario"]["username"]
+            for item in response.data["notificaciones"]
+        }
+
+        self.assertSetEqual(
+            usuarios,
+            {"damarys_sc54"},
+        )
+
+        ids = {
+            item["id"]
+            for item in response.data["notificaciones"]
+        }
+
+        self.assertNotIn(
+            self.notificacion_ajena.id,
+            ids,
+        )
+
+    def test_notificaciones_se_ordenan_desde_la_mas_reciente(self):
+        response = self.client.get(
+            self.url_listado
+        )
+
+        ids = [
+            item["id"]
+            for item in response.data["notificaciones"]
+        ]
+
+        self.assertEqual(
+            ids,
+            [
+                self.notificacion_reciente.id,
+                self.notificacion_leida.id,
+                self.notificacion_antigua.id,
+            ],
+        )
+
+    def test_notificacion_contiene_campos_estado_y_enlace(self):
+        response = self.client.get(
+            self.url_listado
+        )
+
+        notificaciones = {
+            item["id"]: item
+            for item in response.data["notificaciones"]
+        }
+
+        no_leida = notificaciones[
+            self.notificacion_reciente.id
+        ]
+
+        leida = notificaciones[
+            self.notificacion_leida.id
+        ]
+
+        for item in [
+            no_leida,
+            leida,
+        ]:
+            self.assertIn(
+                "titulo",
+                item,
+            )
+            self.assertIn(
+                "mensaje",
+                item,
+            )
+            self.assertIn(
+                "fecha_creacion",
+                item,
+            )
+            self.assertIn(
+                "leida",
+                item,
+            )
+            self.assertIn(
+                "estado",
+                item,
+            )
+            self.assertIn(
+                "enlace",
+                item,
+            )
+
+        self.assertEqual(
+            no_leida["titulo"],
+            "Nuevo gasto",
+        )
+
+        self.assertEqual(
+            no_leida["enlace"],
+            "/grupos/10",
+        )
+
+        self.assertFalse(
+            no_leida["leida"]
+        )
+
+        self.assertEqual(
+            no_leida["estado"],
+            "no_leida",
+        )
+
+        self.assertIsNone(
+            no_leida["fecha_lectura"]
+        )
+
+        self.assertTrue(
+            leida["leida"]
+        )
+
+        self.assertEqual(
+            leida["estado"],
+            "leida",
+        )
+
+        self.assertIsNotNone(
+            leida["fecha_lectura"]
+        )
+
+    def test_usuario_marca_una_notificacion_como_leida(self):
+        response = self.client.patch(
+            self.url_marcar_leida(
+                self.notificacion_reciente
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            "Notificación marcada como leída.",
+        )
+
+        self.assertEqual(
+            response.data["no_leidas"],
+            1,
+        )
+
+        self.notificacion_reciente.refresh_from_db()
+
+        self.assertTrue(
+            self.notificacion_reciente.leida
+        )
+
+        self.assertIsNotNone(
+            self.notificacion_reciente.fecha_lectura
+        )
+
+        self.assertTrue(
+            response.data["notificacion"]["leida"]
+        )
+
+        self.assertEqual(
+            response.data["notificacion"]["estado"],
+            "leida",
+        )
+
+    def test_marcar_notificacion_leida_es_idempotente(self):
+        response = self.client.patch(
+            self.url_marcar_leida(
+                self.notificacion_leida
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            "La notificación ya estaba leída.",
+        )
+
+        self.assertEqual(
+            response.data["no_leidas"],
+            2,
+        )
+
+    def test_usuario_puede_marcar_todas_sus_notificaciones_leidas(self):
+        response = self.client.patch(
+            self.url_marcar_todas,
+            {},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["actualizadas"],
+            2,
+        )
+
+        self.assertEqual(
+            response.data["no_leidas"],
+            0,
+        )
+
+        self.assertFalse(
+            Notification.objects.filter(
+                usuario=self.damarys,
+                leida=False,
+            ).exists()
+        )
+
+        self.assertEqual(
+            Notification.objects.filter(
+                usuario=self.damarys,
+                leida=True,
+                fecha_lectura__isnull=False,
+            ).count(),
+            3,
+        )
+
+    def test_marcar_todas_no_modifica_notificaciones_ajenas(self):
+        self.client.patch(
+            self.url_marcar_todas,
+            {},
+            format="json",
+        )
+
+        self.notificacion_ajena.refresh_from_db()
+
+        self.assertFalse(
+            self.notificacion_ajena.leida
+        )
+
+        self.assertIsNone(
+            self.notificacion_ajena.fecha_lectura
+        )
+
+    def test_usuario_no_puede_modificar_notificacion_ajena(self):
+        response = self.client.patch(
+            self.url_marcar_leida(
+                self.notificacion_ajena
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertEqual(
+            response.data["error"],
+            "Notificación no encontrada.",
+        )
+
+        self.notificacion_ajena.refresh_from_db()
+
+        self.assertFalse(
+            self.notificacion_ajena.leida
+        )
+
+        self.assertIsNone(
+            self.notificacion_ajena.fecha_lectura
+        )
+
+    def test_centro_vacio_muestra_mensaje_informativo(self):
+        usuario_sin_notificaciones = User.objects.create_user(
+            username="sin_notificaciones_sc54",
+            email="sin_notificaciones_sc54@example.com",
+            password="Prueba123",
+        )
+
+        self.client.force_authenticate(
+            user=usuario_sin_notificaciones
+        )
+
+        response = self.client.get(
+            self.url_listado
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["total_notificaciones"],
+            0,
+        )
+
+        self.assertEqual(
+            response.data["no_leidas"],
+            0,
+        )
+
+        self.assertEqual(
+            response.data["notificaciones"],
+            [],
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            "No tienes notificaciones todavía.",
+        )
+
+    def test_usuario_no_autenticado_no_puede_acceder(self):
+        self.client.force_authenticate(
+            user=None
+        )
+
+        respuestas = [
+            self.client.get(
+                self.url_listado
+            ),
+            self.client.patch(
+                self.url_marcar_todas,
+                {},
+                format="json",
+            ),
+            self.client.patch(
+                self.url_marcar_leida(
+                    self.notificacion_reciente
+                ),
+                {},
+                format="json",
+            ),
+        ]
+
+        for response in respuestas:
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_401_UNAUTHORIZED,
+            )
 

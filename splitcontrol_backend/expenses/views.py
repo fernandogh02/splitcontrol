@@ -4,11 +4,18 @@ from django.contrib.auth.models import User
 from django.db import transaction
 from django.db.models import Q
 from django.http import JsonResponse
+from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Expense, Group, GroupMembership, Payment
+from .models import (
+    Expense,
+    Group,
+    GroupMembership,
+    Notification,
+    Payment,
+)
 from .services import (
     calcular_balances_grupo,
     calcular_deudas_grupo,
@@ -18,6 +25,7 @@ from .serializers import (
     ExpenseSerializer,
     GroupMembershipSerializer,
     GroupSerializer,
+    NotificationSerializer,
     PaymentSerializer,
     UserSimpleSerializer,
 )
@@ -1157,6 +1165,136 @@ class PaymentDetailView(APIView):
                 "pago": PaymentSerializer(
                     pago
                 ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class NotificationListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        notificaciones = (
+            Notification.objects
+            .filter(usuario=request.user)
+            .select_related("usuario")
+            .order_by(
+                "-fecha_creacion",
+                "-id",
+            )
+        )
+
+        total_notificaciones = notificaciones.count()
+
+        total_no_leidas = notificaciones.filter(
+            leida=False
+        ).count()
+
+        mensaje = (
+            "Notificaciones consultadas correctamente."
+            if total_notificaciones > 0
+            else "No tienes notificaciones todavía."
+        )
+
+        return Response(
+            {
+                "total_notificaciones": total_notificaciones,
+                "no_leidas": total_no_leidas,
+                "mensaje": mensaje,
+                "notificaciones": (
+                    NotificationSerializer(
+                        notificaciones,
+                        many=True,
+                    ).data
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class NotificationMarkReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, notification_id):
+        notificacion = (
+            Notification.objects
+            .filter(
+                id=notification_id,
+                usuario=request.user,
+            )
+            .select_related("usuario")
+            .first()
+        )
+
+        if not notificacion:
+            return Response(
+                {
+                    "error": "Notificación no encontrada."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        cambio_realizado = (
+            notificacion.marcar_como_leida()
+        )
+
+        total_no_leidas = (
+            Notification.objects
+            .filter(
+                usuario=request.user,
+                leida=False,
+            )
+            .count()
+        )
+
+        mensaje = (
+            "Notificación marcada como leída."
+            if cambio_realizado
+            else "La notificación ya estaba leída."
+        )
+
+        return Response(
+            {
+                "mensaje": mensaje,
+                "no_leidas": total_no_leidas,
+                "notificacion": NotificationSerializer(
+                    notificacion
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class NotificationMarkAllReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def patch(self, request):
+        fecha_lectura = timezone.now()
+
+        cantidad_actualizada = (
+            Notification.objects
+            .filter(
+                usuario=request.user,
+                leida=False,
+            )
+            .update(
+                leida=True,
+                fecha_lectura=fecha_lectura,
+            )
+        )
+
+        mensaje = (
+            "Todas las notificaciones fueron marcadas como leídas."
+            if cantidad_actualizada > 0
+            else "No tienes notificaciones pendientes de lectura."
+        )
+
+        return Response(
+            {
+                "mensaje": mensaje,
+                "actualizadas": cantidad_actualizada,
+                "no_leidas": 0,
             },
             status=status.HTTP_200_OK,
         )

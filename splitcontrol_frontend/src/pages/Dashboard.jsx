@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/splitcontrol-logo.png";
+import "../Notifications.css";
 
 const obtenerConfiguracionEstado = (estado) => {
   if (estado === "programada") {
@@ -36,6 +37,8 @@ function Dashboard() {
   const [grupos, setGrupos] = useState([]);
   const [cargandoGrupos, setCargandoGrupos] = useState(true);
   const [errorGrupos, setErrorGrupos] = useState("");
+  const [notificacionesNoLeidas, setNotificacionesNoLeidas] =
+    useState(0);
 
   const username = localStorage.getItem("username") || "usuario";
   const displayName =
@@ -101,6 +104,57 @@ function Dashboard() {
     obtenerGrupos();
   }, []);
 
+  useEffect(() => {
+    const obtenerContadorNotificaciones = async () => {
+      const token = localStorage.getItem("access");
+
+      if (!token) {
+        setNotificacionesNoLeidas(0);
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          "http://127.0.0.1:8000/api/notificaciones/",
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        let data = {};
+
+        try {
+          data = await response.json();
+        } catch {
+          data = {};
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              data.detail ||
+              "No se pudo consultar el contador."
+          );
+        }
+
+        setNotificacionesNoLeidas(
+          Number(data.no_leidas) || 0
+        );
+      } catch (errorNotificaciones) {
+        console.error(
+          "No se pudo cargar el contador de notificaciones:",
+          errorNotificaciones
+        );
+        setNotificacionesNoLeidas(0);
+      }
+    };
+
+    obtenerContadorNotificaciones();
+  }, []);
+
   const handleLogout = () => {
     localStorage.removeItem("access");
     localStorage.removeItem("refresh");
@@ -130,6 +184,20 @@ function Dashboard() {
               onClick={goToCreateGroup}
             >
               👥 Grupos
+            </button>
+
+            <button
+              className="sidebar-link"
+              onClick={() => navigate("/notificaciones")}
+            >
+              🔔 Notificaciones
+              {notificacionesNoLeidas > 0 && (
+                <span className="sidebar-notification-count">
+                  {notificacionesNoLeidas > 99
+                    ? "99+"
+                    : notificacionesNoLeidas}
+                </span>
+              )}
             </button>
 
             <button className="sidebar-link">
@@ -179,8 +247,22 @@ function Dashboard() {
           </div>
 
           <div className="header-actions">
-            <button className="icon-button">
+            <button
+              type="button"
+              className="icon-button notification-bell-button"
+              onClick={() => navigate("/notificaciones")}
+              aria-label={`Abrir notificaciones. ${notificacionesNoLeidas} no leídas`}
+              title="Centro de notificaciones"
+            >
               🔔
+
+              {notificacionesNoLeidas > 0 && (
+                <span className="notification-count-badge">
+                  {notificacionesNoLeidas > 99
+                    ? "99+"
+                    : notificacionesNoLeidas}
+                </span>
+              )}
             </button>
 
             <button className="icon-button">
