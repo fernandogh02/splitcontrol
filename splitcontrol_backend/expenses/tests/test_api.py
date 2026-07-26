@@ -14,6 +14,7 @@ from expenses.models import (
     ActivityHistory,
     ClosingBalance,
     Debt,
+    DebtReviewAssignment,
     Expense,
     ExpenseDivision,
     Group,
@@ -7432,5 +7433,1030 @@ class GenerarSaldosPendientesSC58Test(APITestCase):
             self.assertEqual(
                 response.status_code,
                 status.HTTP_405_METHOD_NOT_ALLOWED,
+            )
+
+
+class AsignarResponsableDeudasSC60Test(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc60",
+            email="fernando_sc60@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc60",
+            email="carlita_sc60@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc60",
+            email="damarys_sc60@example.com",
+            password="Prueba123",
+        )
+
+        self.retirado = User.objects.create_user(
+            username="retirado_sc60",
+            email="retirado_sc60@example.com",
+            password="Prueba123",
+        )
+
+        self.externo = User.objects.create_user(
+            username="externo_sc60",
+            email="externo_sc60@example.com",
+            password="Prueba123",
+        )
+
+        ahora = timezone.now()
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad SC-60",
+            descripcion="Responsable para revisar deudas",
+            creador=self.fernando,
+            fecha_inicio=ahora - timedelta(hours=1),
+            fecha_fin=ahora + timedelta(days=2),
+        )
+
+        self.grupo.participantes.add(
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        )
+
+        self.membresia_fernando = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.fernando,
+            )
+        )
+
+        self.membresia_carlita = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.carlita,
+            )
+        )
+
+        self.membresia_damarys = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.damarys,
+            )
+        )
+
+        self.membresia_retirada = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.retirado,
+            )
+        )
+        self.membresia_retirada.retirar()
+
+        self.url = (
+            f"/api/grupos/{self.grupo.id}/"
+            "responsable-deudas/"
+        )
+
+        self.url_detalle = (
+            f"/api/grupos/{self.grupo.id}/"
+        )
+
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+    def asignar(
+        self,
+        usuario,
+        metodo="put",
+    ):
+        funcion = getattr(
+            self.client,
+            metodo,
+        )
+
+        return funcion(
+            self.url,
+            {
+                "responsable_id": usuario.id,
+            },
+            format="json",
+        )
+
+    def obtener_asignacion_vigente(self):
+        return DebtReviewAssignment.objects.get(
+            grupo=self.grupo,
+            vigente=True,
+        )
+
+    def test_sin_responsable_muestra_mensaje_informativo(
+        self,
+    ):
+        response = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertIsNone(
+            response.data["responsable"]
+        )
+
+        self.assertIsNone(
+            response.data["asignacion_vigente"]
+        )
+
+        self.assertFalse(
+            response.data["puede_revisar_solicitudes"]
+        )
+
+        self.assertEqual(
+            response.data["total_asignaciones"],
+            0,
+        )
+
+        self.assertEqual(
+            response.data["historial_asignaciones"],
+            [],
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            (
+                "No existe un responsable asignado "
+                "para revisar las deudas."
+            ),
+        )
+
+        detalle = self.client.get(
+            self.url_detalle
+        )
+
+        self.assertIsNone(
+            detalle.data["responsable_deudas"]
+        )
+
+        self.assertIsNone(
+            detalle.data[
+                "asignacion_responsable_deudas"
+            ]
+        )
+
+    def test_creador_asigna_participante_activo(
+        self,
+    ):
+        response = self.asignar(
+            self.carlita
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            (
+                "Responsable de deudas asignado "
+                "correctamente."
+            ),
+        )
+
+        self.assertTrue(
+            response.data["cambio_realizado"]
+        )
+
+        asignacion = self.obtener_asignacion_vigente()
+
+        self.assertEqual(
+            asignacion.responsable,
+            self.carlita,
+        )
+
+        self.assertEqual(
+            asignacion.asignado_por,
+            self.fernando,
+        )
+
+        self.assertEqual(
+            asignacion.responsable_username,
+            "carlita_sc60",
+        )
+
+        self.assertEqual(
+            asignacion.asignado_por_username,
+            "fernando_sc60",
+        )
+
+        self.assertTrue(
+            asignacion.vigente
+        )
+
+        self.assertIsNone(
+            asignacion.fecha_fin
+        )
+
+        self.assertIsNotNone(
+            asignacion.fecha_asignacion
+        )
+
+    def test_creador_puede_asignarse_a_si_mismo(
+        self,
+    ):
+        response = self.asignar(
+            self.fernando,
+            metodo="patch",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        asignacion = self.obtener_asignacion_vigente()
+
+        self.assertEqual(
+            asignacion.responsable,
+            self.fernando,
+        )
+
+        self.assertTrue(
+            self.grupo.puede_revisar_solicitudes_deuda(
+                self.fernando
+            )
+        )
+
+    def test_responsable_se_muestra_en_informacion_actividad(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        response = self.client.get(
+            self.url_detalle
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data[
+                "responsable_deudas"
+            ]["username"],
+            "carlita_sc60",
+        )
+
+        asignacion = response.data[
+            "asignacion_responsable_deudas"
+        ]
+
+        self.assertEqual(
+            asignacion["responsable_username"],
+            "carlita_sc60",
+        )
+
+        self.assertEqual(
+            asignacion["asignado_por_username"],
+            "fernando_sc60",
+        )
+
+        self.assertTrue(
+            asignacion["vigente"]
+        )
+
+        self.assertEqual(
+            asignacion["estado"],
+            "vigente",
+        )
+
+        self.assertIsNotNone(
+            asignacion["fecha_asignacion"]
+        )
+
+    def test_participante_activo_consulta_responsable(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        self.client.force_authenticate(
+            user=self.damarys
+        )
+
+        response = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["responsable"]["username"],
+            "carlita_sc60",
+        )
+
+        self.assertFalse(
+            response.data["puede_revisar_solicitudes"]
+        )
+
+    def test_usuario_externo_no_puede_ser_responsable(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        response = self.asignar(
+            self.externo
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "responsable_id",
+            response.data,
+        )
+
+        asignacion = self.obtener_asignacion_vigente()
+
+        self.assertEqual(
+            asignacion.responsable,
+            self.carlita,
+        )
+
+        self.assertEqual(
+            DebtReviewAssignment.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            1,
+        )
+
+    def test_participante_retirado_no_puede_ser_responsable(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        response = self.asignar(
+            self.retirado
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "responsable_id",
+            response.data,
+        )
+
+        asignacion = self.obtener_asignacion_vigente()
+
+        self.assertEqual(
+            asignacion.responsable,
+            self.carlita,
+        )
+
+        self.assertEqual(
+            DebtReviewAssignment.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            1,
+        )
+
+    def test_usuario_inexistente_no_modifica_responsable_actual(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        response = self.client.put(
+            self.url,
+            {
+                "responsable_id": 999999,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        asignacion = self.obtener_asignacion_vigente()
+
+        self.assertEqual(
+            asignacion.responsable,
+            self.carlita,
+        )
+
+        self.assertEqual(
+            DebtReviewAssignment.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            1,
+        )
+
+    def test_solo_creador_puede_asignar_responsable(
+        self,
+    ):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response = self.asignar(
+            self.damarys
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertFalse(
+            DebtReviewAssignment.objects.filter(
+                grupo=self.grupo
+            ).exists()
+        )
+
+    def test_cambio_de_responsable_conserva_asignacion_anterior(
+        self,
+    ):
+        primera = self.asignar(
+            self.carlita
+        )
+
+        primera_id = primera.data[
+            "asignacion_vigente"
+        ]["id"]
+
+        segunda = self.asignar(
+            self.damarys
+        )
+
+        self.assertEqual(
+            segunda.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            segunda.data["mensaje"],
+            (
+                "Responsable de deudas actualizado "
+                "correctamente."
+            ),
+        )
+
+        self.assertEqual(
+            DebtReviewAssignment.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            2,
+        )
+
+        anterior = DebtReviewAssignment.objects.get(
+            id=primera_id
+        )
+
+        actual = self.obtener_asignacion_vigente()
+
+        self.assertFalse(
+            anterior.vigente
+        )
+
+        self.assertIsNotNone(
+            anterior.fecha_fin
+        )
+
+        self.assertEqual(
+            anterior.responsable,
+            self.carlita,
+        )
+
+        self.assertTrue(
+            actual.vigente
+        )
+
+        self.assertEqual(
+            actual.responsable,
+            self.damarys,
+        )
+
+        self.assertEqual(
+            DebtReviewAssignment.objects.filter(
+                grupo=self.grupo,
+                vigente=True,
+            ).count(),
+            1,
+        )
+
+    def test_historial_endpoint_conserva_responsables_anteriores(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        self.asignar(
+            self.damarys
+        )
+
+        response = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["total_asignaciones"],
+            2,
+        )
+
+        historial = response.data[
+            "historial_asignaciones"
+        ]
+
+        self.assertEqual(
+            historial[0]["responsable_username"],
+            "damarys_sc60",
+        )
+
+        self.assertEqual(
+            historial[0]["estado"],
+            "vigente",
+        )
+
+        self.assertEqual(
+            historial[1]["responsable_username"],
+            "carlita_sc60",
+        )
+
+        self.assertEqual(
+            historial[1]["estado"],
+            "anterior",
+        )
+
+        self.assertIsNotNone(
+            historial[1]["fecha_fin"]
+        )
+
+    def test_asignacion_y_cambio_se_registran_en_historial(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        self.asignar(
+            self.damarys
+        )
+
+        eventos = (
+            ActivityHistory.objects
+            .filter(grupo=self.grupo)
+            .order_by("fecha_evento", "id")
+        )
+
+        self.assertEqual(
+            eventos.count(),
+            2,
+        )
+
+        evento_asignacion = eventos[0]
+        evento_cambio = eventos[1]
+
+        self.assertEqual(
+            evento_asignacion.tipo_accion,
+            (
+                ActivityHistory
+                .TIPO_RESPONSABLE_DEUDAS_ASIGNADO
+            ),
+        )
+
+        self.assertEqual(
+            evento_cambio.tipo_accion,
+            (
+                ActivityHistory
+                .TIPO_RESPONSABLE_DEUDAS_CAMBIADO
+            ),
+        )
+
+        for evento in eventos:
+            self.assertEqual(
+                evento.usuario,
+                self.fernando,
+            )
+
+            self.assertEqual(
+                evento.usuario_username,
+                "fernando_sc60",
+            )
+
+            self.assertIsNotNone(
+                evento.fecha_evento
+            )
+
+            self.assertEqual(
+                evento.datos[
+                    "asignado_por"
+                ]["usuario_id"],
+                self.fernando.id,
+            )
+
+            self.assertIsNotNone(
+                evento.datos["fecha_asignacion"]
+            )
+
+        self.assertEqual(
+            evento_cambio.datos[
+                "responsable_anterior"
+            ]["responsable_username"],
+            "carlita_sc60",
+        )
+
+        self.assertEqual(
+            evento_cambio.datos[
+                "responsable_nuevo"
+            ]["username"],
+            "damarys_sc60",
+        )
+
+    def test_reasignar_mismo_usuario_no_duplica_registros(
+        self,
+    ):
+        primera = self.asignar(
+            self.carlita
+        )
+
+        segunda = self.asignar(
+            self.carlita
+        )
+
+        self.assertEqual(
+            primera.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            segunda.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertFalse(
+            segunda.data["cambio_realizado"]
+        )
+
+        self.assertEqual(
+            segunda.data["mensaje"],
+            (
+                "El usuario seleccionado ya es el "
+                "responsable vigente de las deudas."
+            ),
+        )
+
+        self.assertEqual(
+            DebtReviewAssignment.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            1,
+        )
+
+        self.assertEqual(
+            ActivityHistory.objects.filter(
+                grupo=self.grupo,
+                tipo_accion__in=[
+                    ActivityHistory
+                    .TIPO_RESPONSABLE_DEUDAS_ASIGNADO,
+                    ActivityHistory
+                    .TIPO_RESPONSABLE_DEUDAS_CAMBIADO,
+                ],
+            ).count(),
+            1,
+        )
+
+    def test_solo_responsable_vigente_puede_revisar_solicitudes(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        self.assertTrue(
+            self.grupo.puede_revisar_solicitudes_deuda(
+                self.carlita
+            )
+        )
+
+        self.assertFalse(
+            self.grupo.puede_revisar_solicitudes_deuda(
+                self.fernando
+            )
+        )
+
+        self.assertFalse(
+            self.grupo.puede_revisar_solicitudes_deuda(
+                self.damarys
+            )
+        )
+
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        respuesta_responsable = self.client.get(
+            self.url
+        )
+
+        self.client.force_authenticate(
+            user=self.damarys
+        )
+
+        respuesta_otro = self.client.get(
+            self.url
+        )
+
+        self.assertTrue(
+            respuesta_responsable.data[
+                "puede_revisar_solicitudes"
+            ]
+        )
+
+        self.assertFalse(
+            respuesta_otro.data[
+                "puede_revisar_solicitudes"
+            ]
+        )
+
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+        self.asignar(
+            self.damarys
+        )
+
+        self.assertFalse(
+            self.grupo.puede_revisar_solicitudes_deuda(
+                self.carlita
+            )
+        )
+
+        self.assertTrue(
+            self.grupo.puede_revisar_solicitudes_deuda(
+                self.damarys
+            )
+        )
+
+    def test_no_se_puede_retirar_responsable_vigente(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        response = self.client.delete(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"participantes/{self.carlita.id}/"
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            response.data["error"],
+            (
+                "No puedes retirar al responsable "
+                "vigente de las deudas. Primero debes "
+                "asignar otro responsable."
+            ),
+        )
+
+        self.membresia_carlita.refresh_from_db()
+
+        self.assertTrue(
+            self.membresia_carlita.activo
+        )
+
+        self.assertEqual(
+            self.grupo.responsable_deudas,
+            self.carlita,
+        )
+
+    def test_responsable_anterior_puede_retirarse_tras_cambio(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        self.asignar(
+            self.damarys
+        )
+
+        response = self.client.delete(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"participantes/{self.carlita.id}/"
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.membresia_carlita.refresh_from_db()
+
+        self.assertFalse(
+            self.membresia_carlita.activo
+        )
+
+        self.assertEqual(
+            self.grupo.responsable_deudas,
+            self.damarys,
+        )
+
+    def test_snapshots_de_asignacion_permanecen_tras_cambio_nombre(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        asignacion = self.obtener_asignacion_vigente()
+
+        self.carlita.username = "carlita_modificada_sc60"
+        self.carlita.save(
+            update_fields=["username"]
+        )
+
+        self.fernando.username = "fernando_modificado_sc60"
+        self.fernando.save(
+            update_fields=["username"]
+        )
+
+        asignacion.refresh_from_db()
+
+        self.assertEqual(
+            asignacion.responsable_username,
+            "carlita_sc60",
+        )
+
+        self.assertEqual(
+            asignacion.asignado_por_username,
+            "fernando_sc60",
+        )
+
+        evento = ActivityHistory.objects.get(
+            grupo=self.grupo,
+            tipo_accion=(
+                ActivityHistory
+                .TIPO_RESPONSABLE_DEUDAS_ASIGNADO
+            ),
+        )
+
+        self.assertEqual(
+            evento.usuario_username,
+            "fernando_sc60",
+        )
+
+        self.assertEqual(
+            evento.datos[
+                "responsable_nuevo"
+            ]["username"],
+            "carlita_sc60",
+        )
+
+    def test_fallo_del_historial_revierte_asignacion_y_cambio(
+        self,
+    ):
+        with patch(
+            "expenses.models.ActivityHistory.registrar",
+            side_effect=RuntimeError(
+                "Fallo simulado del historial"
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.grupo.asignar_responsable_deudas(
+                    responsable=self.carlita,
+                    asignado_por=self.fernando,
+                )
+
+        self.assertFalse(
+            DebtReviewAssignment.objects.filter(
+                grupo=self.grupo
+            ).exists()
+        )
+
+        self.grupo.asignar_responsable_deudas(
+            responsable=self.carlita,
+            asignado_por=self.fernando,
+        )
+
+        with patch(
+            "expenses.models.ActivityHistory.registrar",
+            side_effect=RuntimeError(
+                "Fallo simulado al cambiar responsable"
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.grupo.asignar_responsable_deudas(
+                    responsable=self.damarys,
+                    asignado_por=self.fernando,
+                )
+
+        asignacion = self.obtener_asignacion_vigente()
+
+        self.assertEqual(
+            asignacion.responsable,
+            self.carlita,
+        )
+
+        self.assertEqual(
+            DebtReviewAssignment.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            1,
+        )
+
+    def test_usuario_retirado_y_externo_no_pueden_consultar(
+        self,
+    ):
+        self.asignar(
+            self.carlita
+        )
+
+        for usuario in [
+            self.retirado,
+            self.externo,
+        ]:
+            self.client.force_authenticate(
+                user=usuario
+            )
+
+            response = self.client.get(
+                self.url
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
+
+    def test_usuario_no_autenticado_no_puede_acceder(
+        self,
+    ):
+        self.client.force_authenticate(
+            user=None
+        )
+
+        respuestas = [
+            self.client.get(
+                self.url
+            ),
+            self.client.put(
+                self.url,
+                {
+                    "responsable_id": self.carlita.id,
+                },
+                format="json",
+            ),
+            self.client.patch(
+                self.url,
+                {
+                    "responsable_id": self.carlita.id,
+                },
+                format="json",
+            ),
+        ]
+
+        for response in respuestas:
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_401_UNAUTHORIZED,
             )
 

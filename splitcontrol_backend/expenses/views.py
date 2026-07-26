@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Q
 from django.http import JsonResponse
@@ -27,6 +28,8 @@ from .services import (
 from .serializers import (
     ActivityHistorySerializer,
     ClosingBalanceSerializer,
+    DebtReviewAssignmentRequestSerializer,
+    DebtReviewAssignmentSerializer,
     DebtSerializer,
     ExpenseSerializer,
     GroupMembershipSerializer,
@@ -315,6 +318,226 @@ class GroupDetailView(generics.RetrieveUpdateDestroyAPIView):
             )
 
 
+class GroupDebtResponsibleView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def obtener_respuesta(
+        self,
+        grupo,
+        request,
+        mensaje=None,
+    ):
+        asignacion_vigente = (
+            grupo.asignacion_responsable_deudas_vigente
+        )
+
+        asignaciones = (
+            grupo.asignaciones_responsable_deudas
+            .select_related(
+                "responsable",
+                "asignado_por",
+            )
+            .order_by(
+                "-fecha_asignacion",
+                "-id",
+            )
+        )
+
+        return {
+            "grupo_id": grupo.id,
+            "grupo_nombre": grupo.nombre,
+            "mensaje": (
+                mensaje
+                or grupo.mensaje_responsable_deudas
+            ),
+            "responsable": (
+                UserSimpleSerializer(
+                    asignacion_vigente.responsable,
+                    context={
+                        "request": request,
+                    },
+                ).data
+                if asignacion_vigente
+                else None
+            ),
+            "asignacion_vigente": (
+                DebtReviewAssignmentSerializer(
+                    asignacion_vigente,
+                    context={
+                        "request": request,
+                    },
+                ).data
+                if asignacion_vigente
+                else None
+            ),
+            "puede_revisar_solicitudes": (
+                grupo.puede_revisar_solicitudes_deuda(
+                    request.user
+                )
+            ),
+            "total_asignaciones": asignaciones.count(),
+            "historial_asignaciones": (
+                DebtReviewAssignmentSerializer(
+                    asignaciones,
+                    many=True,
+                    context={
+                        "request": request,
+                    },
+                ).data
+            ),
+        }
+
+    def get(self, request, pk):
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar al responsable de deudas."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        return Response(
+            self.obtener_respuesta(
+                grupo=grupo,
+                request=request,
+            ),
+            status=status.HTTP_200_OK,
+        )
+
+    def put(self, request, pk):
+        grupo = (
+            Group.objects
+            .filter(
+                id=pk,
+                creador=request.user,
+            )
+            .select_related("creador")
+            .first()
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o solo el creador "
+                        "puede asignar al responsable de deudas."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = (
+            DebtReviewAssignmentRequestSerializer(
+                data=request.data
+            )
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        responsable = User.objects.get(
+            id=serializer.validated_data[
+                "responsable_id"
+            ]
+        )
+
+        cantidad_anterior = (
+            grupo.asignaciones_responsable_deudas
+            .count()
+        )
+
+        try:
+            asignacion, cambio_realizado = (
+                grupo.asignar_responsable_deudas(
+                    responsable=responsable,
+                    asignado_por=request.user,
+                    momento=timezone.now(),
+                )
+            )
+        except ValidationError as error:
+            errores = (
+                error.message_dict
+                if hasattr(
+                    error,
+                    "message_dict",
+                )
+                else {
+                    "error": error.messages
+                }
+            )
+
+            return Response(
+                errores,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not cambio_realizado:
+            mensaje = (
+                "El usuario seleccionado ya es el "
+                "responsable vigente de las deudas."
+            )
+        elif cantidad_anterior == 0:
+            mensaje = (
+                "Responsable de deudas asignado "
+                "correctamente."
+            )
+        else:
+            mensaje = (
+                "Responsable de deudas actualizado "
+                "correctamente."
+            )
+
+        grupo.refresh_from_db()
+
+        respuesta = self.obtener_respuesta(
+            grupo=grupo,
+            request=request,
+            mensaje=mensaje,
+        )
+
+        respuesta["asignacion_realizada"] = (
+            DebtReviewAssignmentSerializer(
+                asignacion,
+                context={
+                    "request": request,
+                },
+            ).data
+        )
+
+        respuesta["cambio_realizado"] = (
+            cambio_realizado
+        )
+
+        respuesta["grupo"] = GroupSerializer(
+            grupo,
+            context={
+                "request": request,
+            },
+        ).data
+
+        return Response(
+            respuesta,
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(self, request, pk):
+        return self.put(
+            request,
+            pk,
+        )
+
+
 class UserListView(generics.ListAPIView):
     serializer_class = UserSimpleSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -517,6 +740,25 @@ class RemoveParticipantView(APIView):
                 {
                     "error": (
                         "No puedes eliminar al creador del grupo."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        responsable_vigente = (
+            grupo.responsable_deudas
+        )
+
+        if (
+            responsable_vigente
+            and responsable_vigente.id == usuario.id
+        ):
+            return Response(
+                {
+                    "error": (
+                        "No puedes retirar al responsable "
+                        "vigente de las deudas. Primero debes "
+                        "asignar otro responsable."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,

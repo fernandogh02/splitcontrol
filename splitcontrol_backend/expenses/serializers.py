@@ -9,6 +9,7 @@ from .models import (
     ActivityHistory,
     ClosingBalance,
     Debt,
+    DebtReviewAssignment,
     Expense,
     ExpenseDivision,
     Group,
@@ -42,6 +43,80 @@ class UserSimpleSerializer(serializers.ModelSerializer):
         ).strip()
 
         return nombre if nombre else obj.username
+
+
+class DebtReviewAssignmentSerializer(
+    serializers.ModelSerializer
+):
+    grupo_id = serializers.IntegerField(
+        source="grupo.id",
+        read_only=True,
+    )
+
+    responsable = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    responsable_id = serializers.IntegerField(
+        source="responsable.id",
+        read_only=True,
+    )
+
+    asignado_por = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    asignado_por_id = serializers.IntegerField(
+        source="asignado_por.id",
+        read_only=True,
+    )
+
+    estado = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DebtReviewAssignment
+        fields = [
+            "id",
+            "grupo_id",
+            "responsable",
+            "responsable_id",
+            "responsable_username",
+            "asignado_por",
+            "asignado_por_id",
+            "asignado_por_username",
+            "fecha_asignacion",
+            "fecha_fin",
+            "vigente",
+            "estado",
+        ]
+
+        read_only_fields = fields
+
+    def get_estado(self, obj):
+        return (
+            "vigente"
+            if obj.vigente
+            else "anterior"
+        )
+
+
+class DebtReviewAssignmentRequestSerializer(
+    serializers.Serializer
+):
+    responsable_id = serializers.IntegerField(
+        required=True,
+        min_value=1,
+    )
+
+    def validate_responsable_id(self, value):
+        if not User.objects.filter(
+            id=value
+        ).exists():
+            raise serializers.ValidationError(
+                "El usuario seleccionado no existe."
+            )
+
+        return value
 
 
 class GroupMembershipSerializer(
@@ -97,6 +172,16 @@ class GroupSerializer(serializers.ModelSerializer):
         read_only=True,
     )
 
+    responsable_deudas = serializers.SerializerMethodField()
+
+    asignacion_responsable_deudas = (
+        serializers.SerializerMethodField()
+    )
+
+    mensaje_responsable_deudas = serializers.CharField(
+        read_only=True,
+    )
+
     estado = serializers.CharField(
         read_only=True,
     )
@@ -125,6 +210,9 @@ class GroupSerializer(serializers.ModelSerializer):
             "descripcion",
             "creador_username",
             "participantes",
+            "responsable_deudas",
+            "asignacion_responsable_deudas",
+            "mensaje_responsable_deudas",
             "fecha_inicio",
             "fecha_fin",
             "fecha_cierre_automatico",
@@ -138,12 +226,42 @@ class GroupSerializer(serializers.ModelSerializer):
             "id",
             "creador_username",
             "participantes",
+            "responsable_deudas",
+            "asignacion_responsable_deudas",
+            "mensaje_responsable_deudas",
             "fecha_cierre_automatico",
             "fecha_generacion_saldos",
             "estado",
             "total_gastos",
             "fecha_creacion",
         ]
+
+    def get_responsable_deudas(self, obj):
+        responsable = obj.responsable_deudas
+
+        if not responsable:
+            return None
+
+        return UserSimpleSerializer(
+            responsable,
+            context=self.context,
+        ).data
+
+    def get_asignacion_responsable_deudas(
+        self,
+        obj,
+    ):
+        asignacion = (
+            obj.asignacion_responsable_deudas_vigente
+        )
+
+        if not asignacion:
+            return None
+
+        return DebtReviewAssignmentSerializer(
+            asignacion,
+            context=self.context,
+        ).data
 
     def validate_nombre(self, value):
         nombre = value.strip()
