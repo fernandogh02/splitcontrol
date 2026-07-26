@@ -161,6 +161,17 @@ function GroupDetail() {
   const [cargandoBalances, setCargandoBalances] = useState(true);
   const [errorBalances, setErrorBalances] = useState("");
 
+  const [resumenEconomico, setResumenEconomico] = useState(null);
+  const [cuotasEconomicas, setCuotasEconomicas] = useState([]);
+  const [
+    cargandoResumenEconomico,
+    setCargandoResumenEconomico,
+  ] = useState(true);
+  const [
+    errorResumenEconomico,
+    setErrorResumenEconomico,
+  ] = useState("");
+
   const [detalleGastoAbierto, setDetalleGastoAbierto] = useState(false);
   const [gastoSeleccionado, setGastoSeleccionado] = useState(null);
   const [cargandoDetalleGasto, setCargandoDetalleGasto] = useState(false);
@@ -288,6 +299,62 @@ function GroupDetail() {
       );
     } finally {
       setCargandoMembresias(false);
+    }
+  }, [id]);
+
+  const obtenerResumenEconomico = useCallback(async () => {
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setErrorResumenEconomico(
+        "Tu sesión ha expirado. Inicia sesión nuevamente."
+      );
+      setCargandoResumenEconomico(false);
+      return;
+    }
+
+    try {
+      setCargandoResumenEconomico(true);
+      setErrorResumenEconomico("");
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/resumen-economico/`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "No se pudo cargar el resumen económico."
+        );
+      }
+
+      setResumenEconomico(data.resumen || null);
+      setCuotasEconomicas(
+        Array.isArray(data.cuotas) ? data.cuotas : []
+      );
+    } catch (errorResumen) {
+      setResumenEconomico(null);
+      setCuotasEconomicas([]);
+      setErrorResumenEconomico(
+        errorResumen.message ||
+          "No se pudo cargar el resumen económico."
+      );
+    } finally {
+      setCargandoResumenEconomico(false);
     }
   }, [id]);
 
@@ -486,6 +553,16 @@ function GroupDetail() {
 
     obtenerGastos();
   }, [id]);
+
+  useEffect(() => {
+    const temporizador = setTimeout(() => {
+      obtenerResumenEconomico();
+    }, 0);
+
+    return () => {
+      clearTimeout(temporizador);
+    };
+  }, [obtenerResumenEconomico]);
 
   useEffect(() => {
     const cargarBalancesIniciales = async () => {
@@ -738,7 +815,10 @@ function GroupDetail() {
         data.mensaje || "Gasto actualizado correctamente."
       );
 
-      await obtenerBalances();
+      await Promise.all([
+        obtenerBalances(),
+        obtenerResumenEconomico(),
+      ]);
     } catch (errorEdicion) {
       setErrorEdicionGasto(
         errorEdicion.message ||
@@ -830,7 +910,10 @@ function GroupDetail() {
         data.mensaje || "Gasto eliminado correctamente."
       );
 
-      await obtenerBalances();
+      await Promise.all([
+        obtenerBalances(),
+        obtenerResumenEconomico(),
+      ]);
     } catch (errorEliminacion) {
       setError(
         errorEliminacion.message ||
@@ -1000,7 +1083,10 @@ function GroupDetail() {
         data.mensaje || "Pago registrado correctamente."
       );
 
-      await obtenerBalances();
+      await Promise.all([
+        obtenerBalances(),
+        obtenerResumenEconomico(),
+      ]);
     } catch (errorRegistroPago) {
       setErrorPago(
         errorRegistroPago.message ||
@@ -1277,7 +1363,10 @@ function GroupDetail() {
         data.mensaje || "Gasto común registrado correctamente."
       );
 
-      await obtenerBalances();
+      await Promise.all([
+        obtenerBalances(),
+        obtenerResumenEconomico(),
+      ]);
     } catch (errorGasto) {
       setError(
         errorGasto.message || "No se pudo registrar el gasto."
@@ -1368,7 +1457,10 @@ function GroupDetail() {
       );
 
       await obtenerMembresias();
-      await obtenerBalances();
+      await Promise.all([
+        obtenerBalances(),
+        obtenerResumenEconomico(),
+      ]);
     } catch (errorParticipante) {
       setError(
         errorParticipante.message ||
@@ -1443,7 +1535,10 @@ function GroupDetail() {
       );
 
       await obtenerMembresias();
-      await obtenerBalances();
+      await Promise.all([
+        obtenerBalances(),
+        obtenerResumenEconomico(),
+      ]);
     } catch (errorParticipante) {
       setError(
         errorParticipante.message ||
@@ -2279,6 +2374,243 @@ function GroupDetail() {
                                 </div>
                               </div>
                             ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-5 pt-4 border-top">
+                        <div className="d-flex justify-content-between align-items-center gap-3">
+                          <div>
+                            <h5 className="mb-1">
+                              Resumen económico
+                            </h5>
+
+                            <small className="text-muted">
+                              Consulta el total común, los aportes y
+                              la cuota acumulada de cada integrante.
+                            </small>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="btn btn-outline-primary btn-sm"
+                            onClick={obtenerResumenEconomico}
+                            disabled={cargandoResumenEconomico}
+                          >
+                            {cargandoResumenEconomico
+                              ? "Actualizando..."
+                              : "Actualizar"}
+                          </button>
+                        </div>
+
+                        {cargandoResumenEconomico ? (
+                          <div
+                            className="alert alert-light border mt-3"
+                            role="alert"
+                          >
+                            Cargando resumen económico...
+                          </div>
+                        ) : errorResumenEconomico ? (
+                          <div
+                            className="alert alert-danger mt-3"
+                            role="alert"
+                          >
+                            {errorResumenEconomico}
+                          </div>
+                        ) : resumenEconomico ? (
+                          <>
+                            <div className="row g-3 mt-1">
+                              <div className="col-md-3">
+                                <div className="border rounded p-3 h-100 bg-light">
+                                  <small className="text-muted d-block">
+                                    Total de gastos
+                                  </small>
+
+                                  <strong className="fs-5">
+                                    {formatearMonto(
+                                      resumenEconomico.total_gastos
+                                    )}
+                                  </strong>
+                                </div>
+                              </div>
+
+                              <div className="col-md-3">
+                                <div className="border rounded p-3 h-100 bg-light">
+                                  <small className="text-muted d-block">
+                                    Gastos registrados
+                                  </small>
+
+                                  <strong className="fs-5">
+                                    {resumenEconomico.cantidad_gastos ||
+                                      0}
+                                  </strong>
+                                </div>
+                              </div>
+
+                              <div className="col-md-3">
+                                <div className="border rounded p-3 h-100 bg-light">
+                                  <small className="text-muted d-block">
+                                    Total aportado
+                                  </small>
+
+                                  <strong className="fs-5">
+                                    {formatearMonto(
+                                      resumenEconomico.total_aportado
+                                    )}
+                                  </strong>
+                                </div>
+                              </div>
+
+                              <div className="col-md-3">
+                                <div className="border rounded p-3 h-100 bg-light">
+                                  <small className="text-muted d-block">
+                                    Total pendiente
+                                  </small>
+
+                                  <strong className="fs-5">
+                                    {formatearMonto(
+                                      resumenEconomico.total_pendiente
+                                    )}
+                                  </strong>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="d-flex justify-content-between align-items-center mt-4">
+                              <div>
+                                <h6 className="mb-1">
+                                  Cuotas individuales
+                                </h6>
+
+                                <small className="text-muted">
+                                  Las cuotas se calculan desde las
+                                  divisiones históricas guardadas.
+                                </small>
+                              </div>
+
+                              <span className="badge bg-light text-dark border">
+                                {cuotasEconomicas.length}
+                              </span>
+                            </div>
+
+                            {cuotasEconomicas.length > 0 ? (
+                              <div className="d-flex flex-column gap-3 mt-3">
+                                {cuotasEconomicas.map((cuota) => {
+                                  const estaSaldado =
+                                    cuota.estado === "saldado";
+
+                                  return (
+                                    <div
+                                      key={cuota.participante.id}
+                                      className="border rounded p-3"
+                                    >
+                                      <div className="d-flex justify-content-between align-items-start gap-3">
+                                        <div>
+                                          <strong>
+                                            {cuota.participante
+                                              .nombre_completo ||
+                                              cuota.participante
+                                                .username}
+                                          </strong>
+
+                                          <small className="text-muted d-block">
+                                            @{cuota.participante.username}
+                                          </small>
+
+                                          <span
+                                            className={`badge mt-2 ${
+                                              cuota.activo
+                                                ? "bg-success"
+                                                : "bg-secondary"
+                                            }`}
+                                          >
+                                            {cuota.activo
+                                              ? "Miembro activo"
+                                              : "Participante histórico"}
+                                          </span>
+                                        </div>
+
+                                        <div className="text-end">
+                                          <span
+                                            className={`badge ${
+                                              estaSaldado
+                                                ? "bg-success"
+                                                : "bg-warning text-dark"
+                                            }`}
+                                          >
+                                            {estaSaldado
+                                              ? "Saldado"
+                                              : "Pendiente"}
+                                          </span>
+
+                                          <strong className="fs-5 d-block mt-2">
+                                            {formatearMonto(
+                                              cuota.saldo_pendiente
+                                            )}
+                                          </strong>
+
+                                          <small className="text-muted">
+                                            Saldo pendiente
+                                          </small>
+                                        </div>
+                                      </div>
+
+                                      <div className="row g-2 mt-2">
+                                        <div className="col-md-6">
+                                          <div className="bg-light border rounded p-2 h-100">
+                                            <small className="text-muted d-block">
+                                              Cuota acumulada
+                                            </small>
+
+                                            <strong>
+                                              {formatearMonto(
+                                                cuota.cuota_total
+                                              )}
+                                            </strong>
+                                          </div>
+                                        </div>
+
+                                        <div className="col-md-6">
+                                          <div className="bg-light border rounded p-2 h-100">
+                                            <small className="text-muted d-block">
+                                              Total aportado
+                                            </small>
+
+                                            <strong>
+                                              {formatearMonto(
+                                                cuota.total_aportado
+                                              )}
+                                            </strong>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <div className="alert alert-light border mt-3 mb-0">
+                                Todavía no existen cuotas económicas
+                                para esta actividad.
+                              </div>
+                            )}
+
+                            <div
+                              className="alert alert-light border mt-3 mb-0"
+                              role="alert"
+                            >
+                              La suma de las cuotas corresponde a{" "}
+                              <strong>
+                                {formatearMonto(
+                                  resumenEconomico.total_cuotas
+                                )}
+                              </strong>
+                              .
+                            </div>
+                          </>
+                        ) : (
+                          <div className="alert alert-light border mt-3 mb-0">
+                            No hay información económica disponible.
                           </div>
                         )}
                       </div>

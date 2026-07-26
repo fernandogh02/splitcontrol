@@ -9,7 +9,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Expense, Group, GroupMembership, Payment
-from .services import calcular_balances_grupo, calcular_deudas_grupo
+from .services import (
+    calcular_balances_grupo,
+    calcular_deudas_grupo,
+    calcular_resumen_economico_grupo,
+)
 from .serializers import (
     ExpenseSerializer,
     GroupMembershipSerializer,
@@ -701,6 +705,81 @@ class ExpenseDetailView(APIView):
             {
                 "mensaje": "Gasto eliminado correctamente.",
                 "gasto_id": gasto_eliminado_id,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class GroupEconomicSummaryView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar su resumen económico."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        resumen_calculado = calcular_resumen_economico_grupo(
+            grupo
+        )
+
+        cuotas = []
+
+        for item in resumen_calculado["cuotas"]:
+            cuotas.append(
+                {
+                    "participante": UserSimpleSerializer(
+                        item["participante"]
+                    ).data,
+                    "activo": item["activo"],
+                    "cuota_total": (
+                        f'{item["cuota_total"]:.2f}'
+                    ),
+                    "total_aportado": (
+                        f'{item["total_aportado"]:.2f}'
+                    ),
+                    "saldo_pendiente": (
+                        f'{item["saldo_pendiente"]:.2f}'
+                    ),
+                    "estado": item["estado"],
+                }
+            )
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "estado_actividad": grupo.estado,
+                "resumen": {
+                    "total_gastos": (
+                        f'{resumen_calculado["total_gastos"]:.2f}'
+                    ),
+                    "cantidad_gastos": (
+                        resumen_calculado["cantidad_gastos"]
+                    ),
+                    "total_cuotas": (
+                        f'{resumen_calculado["total_cuotas"]:.2f}'
+                    ),
+                    "total_aportado": (
+                        f'{resumen_calculado["total_aportado"]:.2f}'
+                    ),
+                    "total_pendiente": (
+                        f'{resumen_calculado["total_pendiente"]:.2f}'
+                    ),
+                },
+                "total_participantes": len(cuotas),
+                "cuotas": cuotas,
             },
             status=status.HTTP_200_OK,
         )
