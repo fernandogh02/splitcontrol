@@ -7,6 +7,8 @@ from rest_framework import serializers
 
 from .models import (
     ActivityHistory,
+    ClosingBalance,
+    Debt,
     Expense,
     ExpenseDivision,
     Group,
@@ -125,6 +127,8 @@ class GroupSerializer(serializers.ModelSerializer):
             "participantes",
             "fecha_inicio",
             "fecha_fin",
+            "fecha_cierre_automatico",
+            "fecha_generacion_saldos",
             "estado",
             "total_gastos",
             "fecha_creacion",
@@ -134,6 +138,8 @@ class GroupSerializer(serializers.ModelSerializer):
             "id",
             "creador_username",
             "participantes",
+            "fecha_cierre_automatico",
+            "fecha_generacion_saldos",
             "estado",
             "total_gastos",
             "fecha_creacion",
@@ -490,6 +496,136 @@ class ActivityHistorySerializer(
             "descripcion",
             "datos",
             "fecha_evento",
+        ]
+
+        read_only_fields = fields
+
+
+class ClosingBalanceSerializer(
+    serializers.ModelSerializer
+):
+    grupo_id = serializers.IntegerField(
+        source="grupo.id",
+        read_only=True,
+    )
+
+    participante = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    participante_id = serializers.IntegerField(
+        source="participante.id",
+        read_only=True,
+    )
+
+    estado_display = serializers.CharField(
+        source="get_estado_display",
+        read_only=True,
+    )
+
+    cuota_total = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+
+    total_pagado = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+
+    saldo_pendiente = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+
+    tiene_deuda = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ClosingBalance
+        fields = [
+            "id",
+            "grupo_id",
+            "grupo_nombre",
+            "participante",
+            "participante_id",
+            "participante_username",
+            "cuota_total",
+            "total_pagado",
+            "saldo_pendiente",
+            "estado",
+            "estado_display",
+            "tiene_deuda",
+            "fecha_generacion",
+        ]
+
+        read_only_fields = fields
+
+    def get_tiene_deuda(self, obj):
+        return hasattr(
+            obj,
+            "deuda",
+        )
+
+
+class DebtSerializer(
+    serializers.ModelSerializer
+):
+    grupo_id = serializers.IntegerField(
+        source="grupo.id",
+        read_only=True,
+    )
+
+    saldo_cierre_id = serializers.IntegerField(
+        source="saldo_cierre.id",
+        read_only=True,
+    )
+
+    participante = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    participante_id = serializers.IntegerField(
+        source="participante.id",
+        read_only=True,
+    )
+
+    estado_display = serializers.CharField(
+        source="get_estado_display",
+        read_only=True,
+    )
+
+    monto_original = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+
+    saldo_pendiente = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+
+    class Meta:
+        model = Debt
+        fields = [
+            "id",
+            "grupo_id",
+            "grupo_nombre",
+            "saldo_cierre_id",
+            "participante",
+            "participante_id",
+            "participante_username",
+            "monto_original",
+            "saldo_pendiente",
+            "estado",
+            "estado_display",
+            "fecha_generacion",
+            "fecha_actualizacion",
+            "fecha_resolucion",
         ]
 
         read_only_fields = fields
