@@ -514,6 +514,249 @@ class Group(models.Model):
         )
 
     @property
+    def asignacion_responsable_deudas_vigente(self):
+        if not self.pk:
+            return None
+
+        return (
+            self.asignaciones_responsable_deudas
+            .filter(vigente=True)
+            .select_related(
+                "responsable",
+                "asignado_por",
+            )
+            .first()
+        )
+
+    @property
+    def responsable_deudas(self):
+        asignacion = (
+            self.asignacion_responsable_deudas_vigente
+        )
+
+        return (
+            asignacion.responsable
+            if asignacion
+            else None
+        )
+
+    @property
+    def mensaje_responsable_deudas(self):
+        responsable = self.responsable_deudas
+
+        if not responsable:
+            return (
+                "No existe un responsable asignado "
+                "para revisar las deudas."
+            )
+
+        return (
+            f"{responsable.username} es el responsable "
+            "vigente de revisar las deudas."
+        )
+
+    def puede_revisar_solicitudes_deuda(
+        self,
+        usuario,
+    ):
+        if (
+            not usuario
+            or not getattr(
+                usuario,
+                "is_authenticated",
+                False,
+            )
+        ):
+            return False
+
+        asignacion = (
+            self.asignacion_responsable_deudas_vigente
+        )
+
+        if (
+            not asignacion
+            or asignacion.responsable_id != usuario.id
+        ):
+            return False
+
+        return GroupMembership.objects.filter(
+            grupo=self,
+            usuario=usuario,
+            activo=True,
+        ).exists()
+
+    @transaction.atomic
+    def asignar_responsable_deudas(
+        self,
+        responsable,
+        asignado_por,
+        momento=None,
+    ):
+        momento = momento or timezone.now()
+
+        if not self.pk:
+            raise ValidationError(
+                (
+                    "La actividad debe existir antes de "
+                    "asignar un responsable."
+                )
+            )
+
+        if not responsable or not responsable.pk:
+            raise ValidationError({
+                "responsable_id": (
+                    "Debes seleccionar un usuario válido."
+                )
+            })
+
+        if not asignado_por or not asignado_por.pk:
+            raise ValidationError(
+                (
+                    "No se pudo identificar al usuario "
+                    "que realiza la asignación."
+                )
+            )
+
+        grupo_bloqueado = (
+            Group.objects
+            .select_for_update()
+            .select_related("creador")
+            .get(pk=self.pk)
+        )
+
+        if grupo_bloqueado.creador_id != asignado_por.id:
+            raise ValidationError({
+                "responsable_id": (
+                    "Solo el creador de la actividad puede "
+                    "asignar al responsable de las deudas."
+                )
+            })
+
+        membresia_activa = (
+            GroupMembership.objects
+            .filter(
+                grupo=grupo_bloqueado,
+                usuario=responsable,
+                activo=True,
+            )
+            .exists()
+        )
+
+        if not membresia_activa:
+            raise ValidationError({
+                "responsable_id": (
+                    "El responsable debe tener una "
+                    "membresía activa en la actividad."
+                )
+            })
+
+        asignacion_anterior = (
+            DebtReviewAssignment.objects
+            .select_for_update()
+            .filter(
+                grupo=grupo_bloqueado,
+                vigente=True,
+            )
+            .select_related("responsable")
+            .first()
+        )
+
+        if (
+            asignacion_anterior
+            and asignacion_anterior.responsable_id
+            == responsable.id
+        ):
+            return asignacion_anterior, False
+
+        datos_anterior = None
+
+        if asignacion_anterior:
+            datos_anterior = {
+                "asignacion_id": (
+                    asignacion_anterior.id
+                ),
+                "responsable_id": (
+                    asignacion_anterior.responsable_id
+                ),
+                "responsable_username": (
+                    asignacion_anterior
+                    .responsable_username
+                ),
+                "fecha_asignacion": (
+                    asignacion_anterior
+                    .fecha_asignacion
+                    .isoformat()
+                ),
+            }
+
+            asignacion_anterior.finalizar(
+                momento=momento
+            )
+
+        nueva_asignacion = (
+            DebtReviewAssignment.objects.create(
+                grupo=grupo_bloqueado,
+                responsable=responsable,
+                responsable_username=(
+                    responsable.username
+                ),
+                asignado_por=asignado_por,
+                asignado_por_username=(
+                    asignado_por.username
+                ),
+                fecha_asignacion=momento,
+                vigente=True,
+            )
+        )
+
+        tipo_accion = (
+            ActivityHistory
+            .TIPO_RESPONSABLE_DEUDAS_CAMBIADO
+            if asignacion_anterior
+            else ActivityHistory
+            .TIPO_RESPONSABLE_DEUDAS_ASIGNADO
+        )
+
+        descripcion = (
+            f'{asignado_por.username} cambió al '
+            f'responsable de las deudas de '
+            f'"{grupo_bloqueado.nombre}" a '
+            f'{responsable.username}.'
+            if asignacion_anterior
+            else (
+                f'{asignado_por.username} asignó a '
+                f'{responsable.username} como responsable '
+                f'de las deudas de '
+                f'"{grupo_bloqueado.nombre}".'
+            )
+        )
+
+        ActivityHistory.registrar(
+            grupo=grupo_bloqueado,
+            usuario=asignado_por,
+            tipo_accion=tipo_accion,
+            descripcion=descripcion,
+            datos={
+                "asignacion_id": nueva_asignacion.id,
+                "responsable_anterior": datos_anterior,
+                "responsable_nuevo": {
+                    "usuario_id": responsable.id,
+                    "username": responsable.username,
+                },
+                "asignado_por": {
+                    "usuario_id": asignado_por.id,
+                    "username": asignado_por.username,
+                },
+                "fecha_asignacion": (
+                    momento.isoformat()
+                ),
+                "vigente": True,
+            },
+        )
+
+        return nueva_asignacion, True
+
+    @property
     def total_gastos(self):
         total = self.gastos.aggregate(
             total=models.Sum("monto")
@@ -611,6 +854,133 @@ class GroupMembership(models.Model):
                 "fecha_salida",
             ]
         )
+
+
+class DebtReviewAssignment(models.Model):
+    grupo = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name="asignaciones_responsable_deudas",
+    )
+
+    responsable = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="asignaciones_revision_deudas",
+    )
+
+    responsable_username = models.CharField(
+        max_length=150,
+    )
+
+    asignado_por = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="responsables_deudas_asignados",
+    )
+
+    asignado_por_username = models.CharField(
+        max_length=150,
+    )
+
+    fecha_asignacion = models.DateTimeField(
+        default=timezone.now,
+        editable=False,
+    )
+
+    fecha_fin = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+    )
+
+    vigente = models.BooleanField(
+        default=True,
+    )
+
+    class Meta:
+        ordering = [
+            "-fecha_asignacion",
+            "-id",
+        ]
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=["grupo"],
+                condition=models.Q(vigente=True),
+                name=(
+                    "responsable_deudas_vigente_"
+                    "unico_por_grupo"
+                ),
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        vigente=True,
+                        fecha_fin__isnull=True,
+                    )
+                    | models.Q(
+                        vigente=False,
+                        fecha_fin__isnull=False,
+                    )
+                ),
+                name=(
+                    "responsable_deudas_vigencia_"
+                    "fecha_consistentes"
+                ),
+            ),
+        ]
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "grupo",
+                    "vigente",
+                ],
+                name="resp_deuda_grupo_vig_idx",
+            ),
+            models.Index(
+                fields=[
+                    "responsable",
+                    "vigente",
+                ],
+                name="resp_deuda_user_vig_idx",
+            ),
+        ]
+
+    def __str__(self):
+        estado = (
+            "Vigente"
+            if self.vigente
+            else "Anterior"
+        )
+
+        return (
+            f"{self.responsable_username} - "
+            f"{self.grupo.nombre} - "
+            f"{estado}"
+        )
+
+    def finalizar(
+        self,
+        momento=None,
+    ):
+        if not self.vigente:
+            return False
+
+        momento = momento or timezone.now()
+
+        self.vigente = False
+        self.fecha_fin = momento
+
+        self.save(
+            update_fields=[
+                "vigente",
+                "fecha_fin",
+            ]
+        )
+
+        return True
 
 
 class Expense(models.Model):
@@ -1245,6 +1615,12 @@ class ActivityHistory(models.Model):
     TIPO_GASTO_ACTUALIZADO = "gasto_actualizado"
     TIPO_GASTO_ELIMINADO = "gasto_eliminado"
     TIPO_PAGO_CREADO = "pago_creado"
+    TIPO_RESPONSABLE_DEUDAS_ASIGNADO = (
+        "responsable_deudas_asignado"
+    )
+    TIPO_RESPONSABLE_DEUDAS_CAMBIADO = (
+        "responsable_deudas_cambiado"
+    )
 
     TIPOS_ACCION = [
         (
@@ -1286,6 +1662,14 @@ class ActivityHistory(models.Model):
         (
             TIPO_PAGO_CREADO,
             "Pago creado",
+        ),
+        (
+            TIPO_RESPONSABLE_DEUDAS_ASIGNADO,
+            "Responsable de deudas asignado",
+        ),
+        (
+            TIPO_RESPONSABLE_DEUDAS_CAMBIADO,
+            "Responsable de deudas cambiado",
         ),
     ]
 

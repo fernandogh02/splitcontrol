@@ -7,6 +7,7 @@ from .views import (
     ExpenseDetailView,
     GroupBalanceView,
     GroupClosingBalanceView,
+    GroupDebtResponsibleView,
     GroupDebtView,
     GroupDetailView,
     GroupEconomicSummaryView,
@@ -63,6 +64,11 @@ urlpatterns = [
         "grupos/<int:pk>/historial/",
         ActivityHistoryListView.as_view(),
         name="historial_actividad",
+    ),
+    path(
+        "grupos/<int:pk>/responsable-deudas/",
+        GroupDebtResponsibleView.as_view(),
+        name="gestionar_responsable_deudas",
     ),
     path(
         "grupos/<int:pk>/gastos/",
