@@ -5,6 +5,7 @@ from django.test import TestCase
 
 from expenses.models import (
     Expense,
+    ExpenseDivision,
     Group,
     GroupMembership,
 )
@@ -231,6 +232,246 @@ class DivisionGastoTest(TestCase):
         self.assertEqual(
             sum(montos, Decimal("0.00")),
             Decimal("10.00"),
+        )
+
+
+class DivisionAutomaticaGastoSC48Test(TestCase):
+
+    def setUp(self):
+        self.carlita = User.objects.create_user(
+            username="carlita_sc48",
+            email="carlita_sc48@example.com",
+            password="Prueba123",
+        )
+
+        self.andres = User.objects.create_user(
+            username="andres_sc48",
+            email="andres_sc48@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc48",
+            email="damarys_sc48@example.com",
+            password="Prueba123",
+        )
+
+        self.fernando = User.objects.create_user(
+            username="fernando_sc48",
+            email="fernando_sc48@example.com",
+            password="Prueba123",
+        )
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad SC-48",
+            descripcion="División automática e histórica",
+            creador=self.carlita,
+        )
+
+        self.grupo.participantes.add(
+            self.carlita,
+            self.andres,
+            self.damarys,
+        )
+
+        self.membresia_carlita = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.carlita,
+        )
+
+        self.membresia_andres = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.andres,
+        )
+
+        self.membresia_damarys = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.damarys,
+        )
+
+    def crear_gasto(self, monto=Decimal("60.00")):
+        gasto = Expense.objects.create(
+            grupo=self.grupo,
+            descripcion="Gasto común SC-48",
+            monto=monto,
+            registrado_por=self.carlita,
+        )
+
+        gasto.sincronizar_integrantes_activos()
+
+        return gasto
+
+    def test_divisiones_quedan_guardadas_en_expense_division(self):
+        gasto = self.crear_gasto(
+            monto=Decimal("45.00")
+        )
+
+        divisiones = ExpenseDivision.objects.filter(
+            gasto=gasto
+        )
+
+        self.assertEqual(
+            divisiones.count(),
+            3,
+        )
+
+        self.assertEqual(
+            sum(
+                (
+                    division.monto_asignado
+                    for division in divisiones
+                ),
+                Decimal("0.00"),
+            ),
+            Decimal("45.00"),
+        )
+
+    def test_agregar_persona_despues_no_cambia_divisiones_anteriores(
+        self,
+    ):
+        gasto = self.crear_gasto(
+            monto=Decimal("60.00")
+        )
+
+        divisiones_originales = {
+            division.participante_id: division.monto_asignado
+            for division in gasto.divisiones.all()
+        }
+
+        self.grupo.participantes.add(
+            self.fernando
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.fernando,
+        )
+
+        divisiones_posteriores = {
+            division.participante_id: division.monto_asignado
+            for division in gasto.divisiones.all()
+        }
+
+        self.assertDictEqual(
+            divisiones_posteriores,
+            divisiones_originales,
+        )
+
+        self.assertFalse(
+            gasto.participantes.filter(
+                id=self.fernando.id
+            ).exists()
+        )
+
+        self.assertFalse(
+            gasto.divisiones.filter(
+                participante=self.fernando
+            ).exists()
+        )
+
+    def test_retirar_persona_despues_no_cambia_divisiones_anteriores(
+        self,
+    ):
+        gasto = self.crear_gasto(
+            monto=Decimal("60.00")
+        )
+
+        divisiones_originales = {
+            division.participante_id: division.monto_asignado
+            for division in gasto.divisiones.all()
+        }
+
+        self.membresia_damarys.retirar()
+        self.grupo.participantes.remove(
+            self.damarys
+        )
+
+        divisiones_posteriores = {
+            division.participante_id: division.monto_asignado
+            for division in gasto.divisiones.all()
+        }
+
+        self.assertDictEqual(
+            divisiones_posteriores,
+            divisiones_originales,
+        )
+
+        self.assertTrue(
+            gasto.participantes.filter(
+                id=self.damarys.id
+            ).exists()
+        )
+
+        self.assertTrue(
+            gasto.divisiones.filter(
+                participante=self.damarys
+            ).exists()
+        )
+
+    def test_editar_recalcula_solo_participantes_originales(self):
+        gasto = self.crear_gasto(
+            monto=Decimal("60.00")
+        )
+
+        participantes_originales = set(
+            gasto.participantes.values_list(
+                "id",
+                flat=True,
+            )
+        )
+
+        self.grupo.participantes.add(
+            self.fernando
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.fernando,
+        )
+
+        gasto.monto = Decimal("90.00")
+        gasto.save(update_fields=["monto"])
+        gasto.calcular_division_equitativa()
+
+        participantes_recalculados = set(
+            gasto.divisiones.values_list(
+                "participante_id",
+                flat=True,
+            )
+        )
+
+        self.assertSetEqual(
+            participantes_recalculados,
+            participantes_originales,
+        )
+
+        self.assertFalse(
+            gasto.divisiones.filter(
+                participante=self.fernando
+            ).exists()
+        )
+
+        montos = list(
+            gasto.divisiones
+            .order_by("participante_id")
+            .values_list(
+                "monto_asignado",
+                flat=True,
+            )
+        )
+
+        self.assertEqual(
+            montos,
+            [
+                Decimal("30.00"),
+                Decimal("30.00"),
+                Decimal("30.00"),
+            ],
+        )
+
+        self.assertEqual(
+            sum(montos, Decimal("0.00")),
+            Decimal("90.00"),
         )
 
 
