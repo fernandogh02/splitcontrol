@@ -217,6 +217,9 @@ class GroupSerializer(serializers.ModelSerializer):
             "fecha_fin",
             "fecha_cierre_automatico",
             "fecha_generacion_saldos",
+            "caso_excepcional_todos_deben",
+            "fecha_deteccion_todos_deben",
+            "mensaje_caso_todos_deben",
             "estado",
             "total_gastos",
             "fecha_creacion",
@@ -231,6 +234,9 @@ class GroupSerializer(serializers.ModelSerializer):
             "mensaje_responsable_deudas",
             "fecha_cierre_automatico",
             "fecha_generacion_saldos",
+            "caso_excepcional_todos_deben",
+            "fecha_deteccion_todos_deben",
+            "mensaje_caso_todos_deben",
             "estado",
             "total_gastos",
             "fecha_creacion",
@@ -661,6 +667,8 @@ class ClosingBalanceSerializer(
 
     tiene_deuda = serializers.SerializerMethodField()
 
+    es_saldo_propio = serializers.SerializerMethodField()
+
     class Meta:
         model = ClosingBalance
         fields = [
@@ -676,6 +684,7 @@ class ClosingBalanceSerializer(
             "estado",
             "estado_display",
             "tiene_deuda",
+            "es_saldo_propio",
             "fecha_generacion",
         ]
 
@@ -685,6 +694,15 @@ class ClosingBalanceSerializer(
         return hasattr(
             obj,
             "deuda",
+        )
+
+    def get_es_saldo_propio(self, obj):
+        request = self.context.get("request")
+
+        return bool(
+            request
+            and request.user.is_authenticated
+            and request.user.id == obj.participante_id
         )
 
 
@@ -727,6 +745,21 @@ class DebtSerializer(
         read_only=True,
     )
 
+    es_deuda_propia = serializers.SerializerMethodField()
+
+    puede_revisar_solicitudes = (
+        serializers.SerializerMethodField()
+    )
+
+    asociada_a_actividad = serializers.SerializerMethodField()
+
+    acreedor = serializers.SerializerMethodField()
+
+    caso_todos_deben = serializers.BooleanField(
+        source="grupo.caso_excepcional_todos_deben",
+        read_only=True,
+    )
+
     class Meta:
         model = Debt
         fields = [
@@ -741,12 +774,48 @@ class DebtSerializer(
             "saldo_pendiente",
             "estado",
             "estado_display",
+            "es_deuda_propia",
+            "puede_revisar_solicitudes",
+            "asociada_a_actividad",
+            "acreedor",
+            "caso_todos_deben",
             "fecha_generacion",
             "fecha_actualizacion",
             "fecha_resolucion",
         ]
 
         read_only_fields = fields
+
+    def get_es_deuda_propia(self, obj):
+        request = self.context.get("request")
+
+        return bool(
+            request
+            and request.user.is_authenticated
+            and request.user.id == obj.participante_id
+        )
+
+    def get_puede_revisar_solicitudes(
+        self,
+        obj,
+    ):
+        request = self.context.get("request")
+
+        if (
+            not request
+            or not request.user.is_authenticated
+        ):
+            return False
+
+        return obj.grupo.puede_revisar_solicitudes_deuda(
+            request.user
+        )
+
+    def get_asociada_a_actividad(self, obj):
+        return True
+
+    def get_acreedor(self, obj):
+        return None
 
 
 class NotificationSerializer(

@@ -50,6 +50,17 @@ class Group(models.Model):
         editable=False,
     )
 
+    caso_excepcional_todos_deben = models.BooleanField(
+        default=False,
+        editable=False,
+    )
+
+    fecha_deteccion_todos_deben = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+    )
+
     fecha_creacion = models.DateTimeField(
         auto_now_add=True,
     )
@@ -142,6 +153,17 @@ class Group(models.Model):
             self.fecha_cierre_automatico = (
                 grupo_bloqueado.fecha_cierre_automatico
             )
+            self.fecha_generacion_saldos = (
+                grupo_bloqueado.fecha_generacion_saldos
+            )
+            self.caso_excepcional_todos_deben = (
+                grupo_bloqueado
+                .caso_excepcional_todos_deben
+            )
+            self.fecha_deteccion_todos_deben = (
+                grupo_bloqueado
+                .fecha_deteccion_todos_deben
+            )
             return False
 
         fecha_cierre_efectiva = (
@@ -201,6 +223,16 @@ class Group(models.Model):
             grupo_bloqueado.fecha_generacion_saldos
         )
 
+        self.caso_excepcional_todos_deben = (
+            grupo_bloqueado
+            .caso_excepcional_todos_deben
+        )
+
+        self.fecha_deteccion_todos_deben = (
+            grupo_bloqueado
+            .fecha_deteccion_todos_deben
+        )
+
         return True
 
     @transaction.atomic
@@ -230,6 +262,18 @@ class Group(models.Model):
             )
 
         if grupo_bloqueado.fecha_generacion_saldos:
+            self.fecha_generacion_saldos = (
+                grupo_bloqueado.fecha_generacion_saldos
+            )
+            self.caso_excepcional_todos_deben = (
+                grupo_bloqueado
+                .caso_excepcional_todos_deben
+            )
+            self.fecha_deteccion_todos_deben = (
+                grupo_bloqueado
+                .fecha_deteccion_todos_deben
+            )
+
             return (
                 grupo_bloqueado
                 .obtener_resumen_saldos_cierre(
@@ -289,6 +333,7 @@ class Group(models.Model):
 
         saldos_creados = []
         deudas_creadas = []
+        saldos_con_obligacion = []
 
         total_cuotas = Decimal("0.00")
         total_pagado = Decimal("0.00")
@@ -351,6 +396,11 @@ class Group(models.Model):
                 saldo
             )
 
+            if cuota_total > Decimal("0.00"):
+                saldos_con_obligacion.append(
+                    saldo
+                )
+
             if saldo_pendiente > Decimal("0.00"):
                 deuda = Debt.objects.create(
                     grupo=grupo_bloqueado,
@@ -371,13 +421,60 @@ class Group(models.Model):
             total_pagado += pagado_total
             total_pendiente += saldo_pendiente
 
+        total_participantes_con_obligacion = len(
+            saldos_con_obligacion
+        )
+
+        caso_todos_deben = bool(
+            total_participantes_con_obligacion
+            and all(
+                saldo.saldo_pendiente
+                > Decimal("0.00")
+                for saldo in saldos_con_obligacion
+            )
+        )
+
+        total_deudas_registradas = sum(
+            (
+                deuda.saldo_pendiente
+                for deuda in deudas_creadas
+            ),
+            Decimal("0.00"),
+        ).quantize(
+            Decimal("0.01")
+        )
+
+        total_pendiente = total_pendiente.quantize(
+            Decimal("0.01")
+        )
+
+        if total_deudas_registradas != total_pendiente:
+            raise ValidationError(
+                (
+                    "La suma de las deudas no coincide "
+                    "con el total pendiente de la actividad."
+                )
+            )
+
         grupo_bloqueado.fecha_generacion_saldos = (
             momento
+        )
+
+        grupo_bloqueado.caso_excepcional_todos_deben = (
+            caso_todos_deben
+        )
+
+        grupo_bloqueado.fecha_deteccion_todos_deben = (
+            momento
+            if caso_todos_deben
+            else None
         )
 
         grupo_bloqueado.save(
             update_fields=[
                 "fecha_generacion_saldos",
+                "caso_excepcional_todos_deben",
+                "fecha_deteccion_todos_deben",
             ]
         )
 
@@ -385,10 +482,80 @@ class Group(models.Model):
             grupo_bloqueado.fecha_generacion_saldos
         )
 
+        self.caso_excepcional_todos_deben = (
+            grupo_bloqueado
+            .caso_excepcional_todos_deben
+        )
+
+        self.fecha_deteccion_todos_deben = (
+            grupo_bloqueado
+            .fecha_deteccion_todos_deben
+        )
+
+        if caso_todos_deben:
+            responsable = (
+                grupo_bloqueado.responsable_deudas
+            )
+
+            ActivityHistory.registrar(
+                grupo=grupo_bloqueado,
+                usuario=None,
+                tipo_accion=(
+                    ActivityHistory
+                    .TIPO_CASO_TODOS_DEBEN_DETECTADO
+                ),
+                descripcion=(
+                    "El sistema detectó que todos los "
+                    "participantes con obligaciones "
+                    f'de la actividad '
+                    f'"{grupo_bloqueado.nombre}" '
+                    "mantienen saldos pendientes."
+                ),
+                datos={
+                    "grupo_id": grupo_bloqueado.id,
+                    "grupo_nombre": (
+                        grupo_bloqueado.nombre
+                    ),
+                    "caso_todos_deben": True,
+                    "total_participantes_con_obligacion": (
+                        total_participantes_con_obligacion
+                    ),
+                    "total_deudores": len(
+                        deudas_creadas
+                    ),
+                    "total_pendiente": (
+                        f"{total_pendiente:.2f}"
+                    ),
+                    "deudas_ids": [
+                        deuda.id
+                        for deuda in deudas_creadas
+                    ],
+                    "responsable_deudas": {
+                        "usuario_id": (
+                            responsable.id
+                            if responsable
+                            else None
+                        ),
+                        "username": (
+                            responsable.username
+                            if responsable
+                            else None
+                        ),
+                        "es_acreedor_automatico": False,
+                    },
+                    "detectado_en": momento.isoformat(),
+                },
+            )
+
         if not saldos_creados:
             mensaje = (
                 "La actividad cerró sin gastos, pagos "
                 "ni saldos pendientes."
+            )
+        elif caso_todos_deben:
+            mensaje = (
+                "Todos los participantes con obligaciones "
+                "mantienen saldos pendientes."
             )
         elif not deudas_creadas:
             mensaje = (
@@ -402,6 +569,10 @@ class Group(models.Model):
         return {
             "generados": True,
             "mensaje": mensaje,
+            "caso_todos_deben": caso_todos_deben,
+            "total_participantes_con_obligacion": (
+                total_participantes_con_obligacion
+            ),
             "total_saldos": len(saldos_creados),
             "total_deudas": len(deudas_creadas),
             "total_cuotas": f"{total_cuotas:.2f}",
@@ -439,10 +610,35 @@ class Group(models.Model):
         total_saldos = saldos.count()
         total_deudas = self.deudas_generadas.count()
 
+        saldos_con_obligacion = saldos.filter(
+            cuota_total__gt=Decimal("0.00")
+        )
+
+        total_participantes_con_obligacion = (
+            saldos_con_obligacion.count()
+        )
+
+        caso_todos_deben_calculado = bool(
+            total_participantes_con_obligacion
+            and not saldos_con_obligacion.filter(
+                saldo_pendiente__lte=Decimal("0.00")
+            ).exists()
+        )
+
+        caso_todos_deben = bool(
+            self.caso_excepcional_todos_deben
+            or caso_todos_deben_calculado
+        )
+
         if total_saldos == 0:
             mensaje = (
                 "La actividad cerró sin gastos, pagos "
                 "ni saldos pendientes."
+            )
+        elif caso_todos_deben:
+            mensaje = (
+                "Todos los participantes con obligaciones "
+                "mantienen saldos pendientes."
             )
         elif total_deudas == 0:
             mensaje = (
@@ -455,6 +651,13 @@ class Group(models.Model):
 
         respuesta = {
             "mensaje": mensaje,
+            "caso_todos_deben": caso_todos_deben,
+            "fecha_deteccion_todos_deben": (
+                self.fecha_deteccion_todos_deben
+            ),
+            "total_participantes_con_obligacion": (
+                total_participantes_con_obligacion
+            ),
             "total_saldos": total_saldos,
             "total_deudas": total_deudas,
             "total_cuotas": f"{total_cuotas:.2f}",
@@ -755,6 +958,69 @@ class Group(models.Model):
         )
 
         return nueva_asignacion, True
+
+    def obtener_deuda_propia(
+        self,
+        usuario,
+    ):
+        if (
+            not usuario
+            or not getattr(
+                usuario,
+                "is_authenticated",
+                False,
+            )
+        ):
+            return None
+
+        return (
+            self.deudas_generadas
+            .filter(
+                participante=usuario,
+            )
+            .select_related(
+                "participante",
+                "saldo_cierre",
+            )
+            .first()
+        )
+
+    def obtener_deudas_para_revision(
+        self,
+        usuario,
+    ):
+        if not self.puede_revisar_solicitudes_deuda(
+            usuario
+        ):
+            raise ValidationError(
+                (
+                    "Solo el responsable vigente puede "
+                    "revisar las solicitudes de resolución "
+                    "de deuda."
+                )
+            )
+
+        return (
+            self.deudas_generadas
+            .select_related(
+                "participante",
+                "saldo_cierre",
+            )
+            .order_by(
+                "-fecha_generacion",
+                "-id",
+            )
+        )
+
+    @property
+    def mensaje_caso_todos_deben(self):
+        if not self.caso_excepcional_todos_deben:
+            return None
+
+        return (
+            "Todos los participantes con obligaciones "
+            "mantienen saldos pendientes."
+        )
 
     @property
     def total_gastos(self):
@@ -1621,6 +1887,9 @@ class ActivityHistory(models.Model):
     TIPO_RESPONSABLE_DEUDAS_CAMBIADO = (
         "responsable_deudas_cambiado"
     )
+    TIPO_CASO_TODOS_DEBEN_DETECTADO = (
+        "caso_todos_deben_detectado"
+    )
 
     TIPOS_ACCION = [
         (
@@ -1670,6 +1939,10 @@ class ActivityHistory(models.Model):
         (
             TIPO_RESPONSABLE_DEUDAS_CAMBIADO,
             "Responsable de deudas cambiado",
+        ),
+        (
+            TIPO_CASO_TODOS_DEBEN_DETECTADO,
+            "Caso excepcional: todos deben",
         ),
     ]
 

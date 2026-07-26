@@ -8460,3 +8460,889 @@ class AsignarResponsableDeudasSC60Test(APITestCase):
                 status.HTTP_401_UNAUTHORIZED,
             )
 
+
+class CasoExcepcionalTodosDebenSC61Test(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc61",
+            email="fernando_sc61@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc61",
+            email="carlita_sc61@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc61",
+            email="damarys_sc61@example.com",
+            password="Prueba123",
+        )
+
+        self.externo = User.objects.create_user(
+            username="externo_sc61",
+            email="externo_sc61@example.com",
+            password="Prueba123",
+        )
+
+        self.momento_base = timezone.now()
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad todos deben SC-61",
+            descripcion=(
+                "Caso excepcional con todos los "
+                "participantes en deuda"
+            ),
+            creador=self.fernando,
+            fecha_inicio=(
+                self.momento_base
+                - timedelta(days=3)
+            ),
+            fecha_fin=(
+                self.momento_base
+                - timedelta(hours=1)
+            ),
+        )
+
+        self.grupo.participantes.add(
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        )
+
+        for usuario in [
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        ]:
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=usuario,
+            )
+
+        self.gasto = Expense.objects.create(
+            grupo=self.grupo,
+            descripcion="Gasto común SC-61",
+            monto=Decimal("90.00"),
+            fecha_gasto="2026-07-26",
+            registrado_por=self.fernando,
+        )
+        self.gasto.sincronizar_integrantes_activos()
+
+        Payment.objects.create(
+            grupo=self.grupo,
+            pagador=self.fernando,
+            monto=Decimal("5.00"),
+            fecha_pago="2026-07-26",
+            registrado_por=self.fernando,
+        )
+
+        Payment.objects.create(
+            grupo=self.grupo,
+            pagador=self.carlita,
+            monto=Decimal("10.00"),
+            fecha_pago="2026-07-26",
+            registrado_por=self.carlita,
+        )
+
+        self.grupo.asignar_responsable_deudas(
+            responsable=self.carlita,
+            asignado_por=self.fernando,
+            momento=(
+                self.momento_base
+                - timedelta(hours=2)
+            ),
+        )
+
+        self.url_saldos = (
+            f"/api/grupos/{self.grupo.id}/"
+            "saldos-cierre/"
+        )
+
+        self.url_deudas = (
+            f"/api/grupos/{self.grupo.id}/"
+            "deudas/"
+        )
+
+        self.url_mi_deuda = (
+            f"/api/grupos/{self.grupo.id}/"
+            "mi-deuda/"
+        )
+
+        self.url_revision = (
+            f"/api/grupos/{self.grupo.id}/"
+            "revision-deudas/"
+        )
+
+        self.url_historial = (
+            f"/api/grupos/{self.grupo.id}/"
+            "historial/"
+        )
+
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+    def cerrar_actividad(self):
+        resultado = self.grupo.cerrar_automaticamente(
+            momento=self.momento_base
+        )
+
+        self.grupo.refresh_from_db()
+
+        return resultado
+
+    def deudas_por_usuario(self):
+        return {
+            deuda.participante_username: deuda
+            for deuda in Debt.objects.filter(
+                grupo=self.grupo
+            )
+        }
+
+    def test_detecta_caso_cuando_todos_los_obligados_deben(
+        self,
+    ):
+        resultado = self.cerrar_actividad()
+
+        self.assertTrue(
+            resultado
+        )
+
+        self.assertTrue(
+            self.grupo.caso_excepcional_todos_deben
+        )
+
+        self.assertIsNotNone(
+            self.grupo.fecha_deteccion_todos_deben
+        )
+
+        resumen = (
+            self.grupo.obtener_resumen_saldos_cierre()
+        )
+
+        self.assertTrue(
+            resumen["caso_todos_deben"]
+        )
+
+        self.assertEqual(
+            resumen[
+                "total_participantes_con_obligacion"
+            ],
+            3,
+        )
+
+    def test_actividad_cierra_correctamente_aunque_todos_deban(
+        self,
+    ):
+        resultado = self.cerrar_actividad()
+
+        self.assertTrue(
+            resultado
+        )
+
+        self.assertEqual(
+            self.grupo.estado,
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertIsNotNone(
+            self.grupo.fecha_cierre_automatico
+        )
+
+        self.assertIsNotNone(
+            self.grupo.fecha_generacion_saldos
+        )
+
+        self.assertEqual(
+            ClosingBalance.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            3,
+        )
+
+        self.assertEqual(
+            Debt.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            3,
+        )
+
+    def test_cada_deuda_pertenece_a_actividad_y_sin_acreedor(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        response = self.client.get(
+            self.url_deudas
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertTrue(
+            response.data[
+                "caso_excepcional_todos_deben"
+            ]
+        )
+
+        self.assertEqual(
+            response.data["total_deudas"],
+            3,
+        )
+
+        for deuda in response.data["deudas"]:
+            self.assertEqual(
+                deuda["grupo_id"],
+                self.grupo.id,
+            )
+
+            self.assertTrue(
+                deuda["asociada_a_actividad"]
+            )
+
+            self.assertIsNone(
+                deuda["acreedor"]
+            )
+
+    def test_responsable_no_se_convierte_en_acreedor(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        response = self.client.get(
+            self.url_revision
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response = self.client.get(
+            self.url_revision
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["responsable"]["username"],
+            "carlita_sc61",
+        )
+
+        for deuda in response.data["deudas"]:
+            self.assertIsNone(
+                deuda["acreedor"]
+            )
+
+        deuda_responsable = next(
+            deuda
+            for deuda in response.data["deudas"]
+            if deuda["participante"]["username"]
+            == "carlita_sc61"
+        )
+
+        self.assertTrue(
+            deuda_responsable["es_deuda_propia"]
+        )
+
+    def test_cada_participante_conserva_su_saldo_correcto(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        deudas = self.deudas_por_usuario()
+
+        self.assertEqual(
+            deudas["fernando_sc61"].saldo_pendiente,
+            Decimal("25.00"),
+        )
+
+        self.assertEqual(
+            deudas["carlita_sc61"].saldo_pendiente,
+            Decimal("20.00"),
+        )
+
+        self.assertEqual(
+            deudas["damarys_sc61"].saldo_pendiente,
+            Decimal("30.00"),
+        )
+
+        for deuda in deudas.values():
+            self.assertEqual(
+                deuda.monto_original,
+                deuda.saldo_pendiente,
+            )
+
+    def test_no_se_generan_deudas_duplicadas(
+        self,
+    ):
+        primer_cierre = self.cerrar_actividad()
+
+        segundo_cierre = (
+            self.grupo.cerrar_automaticamente(
+                momento=(
+                    self.momento_base
+                    + timedelta(minutes=5)
+                )
+            )
+        )
+
+        segundo_calculo = (
+            self.grupo.generar_saldos_cierre(
+                momento=(
+                    self.momento_base
+                    + timedelta(minutes=10)
+                )
+            )
+        )
+
+        self.assertTrue(
+            primer_cierre
+        )
+
+        self.assertFalse(
+            segundo_cierre
+        )
+
+        self.assertFalse(
+            segundo_calculo["generados"]
+        )
+
+        self.assertEqual(
+            Debt.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            3,
+        )
+
+        for usuario in [
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        ]:
+            self.assertEqual(
+                Debt.objects.filter(
+                    grupo=self.grupo,
+                    participante=usuario,
+                ).count(),
+                1,
+            )
+
+    def test_suma_de_deudas_coincide_con_total_pendiente(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        suma_deudas = sum(
+            Debt.objects.filter(
+                grupo=self.grupo
+            ).values_list(
+                "saldo_pendiente",
+                flat=True,
+            ),
+            Decimal("0.00"),
+        )
+
+        suma_saldos = sum(
+            ClosingBalance.objects.filter(
+                grupo=self.grupo
+            ).values_list(
+                "saldo_pendiente",
+                flat=True,
+            ),
+            Decimal("0.00"),
+        )
+
+        resumen = (
+            self.grupo.obtener_resumen_saldos_cierre()
+        )
+
+        self.assertEqual(
+            suma_deudas,
+            Decimal("75.00"),
+        )
+
+        self.assertEqual(
+            suma_saldos,
+            Decimal("75.00"),
+        )
+
+        self.assertEqual(
+            Decimal(resumen["total_pendiente"]),
+            Decimal("75.00"),
+        )
+
+    def test_endpoint_muestra_mensaje_todos_deben(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        response = self.client.get(
+            self.url_saldos
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertTrue(
+            response.data[
+                "caso_excepcional_todos_deben"
+            ]
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            (
+                "Todos los participantes con obligaciones "
+                "mantienen saldos pendientes."
+            ),
+        )
+
+        self.assertEqual(
+            response.data["resumen"][
+                "total_participantes_con_obligacion"
+            ],
+            3,
+        )
+
+        self.assertEqual(
+            response.data["resumen"]["total_pendiente"],
+            "75.00",
+        )
+
+    def test_cada_participante_consulta_su_deuda(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        casos = [
+            (
+                self.fernando,
+                "fernando_sc61",
+                Decimal("25.00"),
+            ),
+            (
+                self.carlita,
+                "carlita_sc61",
+                Decimal("20.00"),
+            ),
+            (
+                self.damarys,
+                "damarys_sc61",
+                Decimal("30.00"),
+            ),
+        ]
+
+        for usuario, username, monto in casos:
+            self.client.force_authenticate(
+                user=usuario
+            )
+
+            response = self.client.get(
+                self.url_mi_deuda
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_200_OK,
+            )
+
+            self.assertTrue(
+                response.data[
+                    "caso_excepcional_todos_deben"
+                ]
+            )
+
+            deuda = response.data["deuda"]
+
+            self.assertEqual(
+                deuda["participante"]["username"],
+                username,
+            )
+
+            self.assertEqual(
+                Decimal(deuda["saldo_pendiente"]),
+                monto,
+            )
+
+            self.assertTrue(
+                deuda["es_deuda_propia"]
+            )
+
+            self.assertIsNone(
+                deuda["acreedor"]
+            )
+
+    def test_responsable_revisa_deudas_de_todos(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        response = self.client.get(
+            self.url_revision
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["total_deudas"],
+            3,
+        )
+
+        self.assertEqual(
+            response.data["monto_total_pendiente"],
+            "75.00",
+        )
+
+        participantes = {
+            deuda["participante"]["username"]
+            for deuda in response.data["deudas"]
+        }
+
+        self.assertSetEqual(
+            participantes,
+            {
+                "fernando_sc61",
+                "carlita_sc61",
+                "damarys_sc61",
+            },
+        )
+
+        for deuda in response.data["deudas"]:
+            self.assertTrue(
+                deuda["puede_revisar_solicitudes"]
+            )
+
+    def test_no_responsable_no_puede_revisar_deudas(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        for usuario in [
+            self.fernando,
+            self.damarys,
+        ]:
+            self.client.force_authenticate(
+                user=usuario
+            )
+
+            response = self.client.get(
+                self.url_revision
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_403_FORBIDDEN,
+            )
+
+    def test_pagos_previos_al_cierre_se_descontaron(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        saldos = {
+            saldo.participante_username: saldo
+            for saldo in ClosingBalance.objects.filter(
+                grupo=self.grupo
+            )
+        }
+
+        self.assertEqual(
+            saldos["fernando_sc61"].cuota_total,
+            Decimal("30.00"),
+        )
+
+        self.assertEqual(
+            saldos["fernando_sc61"].total_pagado,
+            Decimal("5.00"),
+        )
+
+        self.assertEqual(
+            saldos["fernando_sc61"].saldo_pendiente,
+            Decimal("25.00"),
+        )
+
+        self.assertEqual(
+            saldos["carlita_sc61"].cuota_total,
+            Decimal("30.00"),
+        )
+
+        self.assertEqual(
+            saldos["carlita_sc61"].total_pagado,
+            Decimal("10.00"),
+        )
+
+        self.assertEqual(
+            saldos["carlita_sc61"].saldo_pendiente,
+            Decimal("20.00"),
+        )
+
+    def test_saldo_cero_no_se_incluye_como_deudor(
+        self,
+    ):
+        Payment.objects.create(
+            grupo=self.grupo,
+            pagador=self.damarys,
+            monto=Decimal("30.00"),
+            fecha_pago="2026-07-26",
+            registrado_por=self.damarys,
+        )
+
+        self.cerrar_actividad()
+
+        self.assertFalse(
+            self.grupo.caso_excepcional_todos_deben
+        )
+
+        self.assertEqual(
+            Debt.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            2,
+        )
+
+        self.assertFalse(
+            Debt.objects.filter(
+                grupo=self.grupo,
+                participante=self.damarys,
+            ).exists()
+        )
+
+        saldo_damarys = ClosingBalance.objects.get(
+            grupo=self.grupo,
+            participante=self.damarys,
+        )
+
+        self.assertEqual(
+            saldo_damarys.saldo_pendiente,
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            saldo_damarys.estado,
+            ClosingBalance.ESTADO_SALDADO,
+        )
+
+    def test_caso_excepcional_queda_en_historial(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        evento = ActivityHistory.objects.get(
+            grupo=self.grupo,
+            tipo_accion=(
+                ActivityHistory
+                .TIPO_CASO_TODOS_DEBEN_DETECTADO
+            ),
+        )
+
+        self.assertIsNone(
+            evento.usuario
+        )
+
+        self.assertEqual(
+            evento.usuario_username,
+            "sistema",
+        )
+
+        self.assertTrue(
+            evento.datos["caso_todos_deben"]
+        )
+
+        self.assertEqual(
+            evento.datos[
+                "total_participantes_con_obligacion"
+            ],
+            3,
+        )
+
+        self.assertEqual(
+            evento.datos["total_deudores"],
+            3,
+        )
+
+        self.assertEqual(
+            evento.datos["total_pendiente"],
+            "75.00",
+        )
+
+        self.assertFalse(
+            evento.datos[
+                "responsable_deudas"
+            ]["es_acreedor_automatico"]
+        )
+
+        response = self.client.get(
+            self.url_historial
+        )
+
+        tipos = {
+            item["tipo_accion"]
+            for item in response.data["eventos"]
+        }
+
+        self.assertIn(
+            (
+                ActivityHistory
+                .TIPO_CASO_TODOS_DEBEN_DETECTADO
+            ),
+            tipos,
+        )
+
+    def test_fallo_del_calculo_no_deja_registros_parciales(
+        self,
+    ):
+        with patch(
+            "expenses.models.ActivityHistory.registrar",
+            side_effect=RuntimeError(
+                "Fallo simulado del caso todos deben"
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.grupo.cerrar_automaticamente(
+                    momento=self.momento_base
+                )
+
+        self.grupo.refresh_from_db()
+
+        self.assertIsNone(
+            self.grupo.fecha_cierre_automatico
+        )
+
+        self.assertIsNone(
+            self.grupo.fecha_generacion_saldos
+        )
+
+        self.assertFalse(
+            self.grupo.caso_excepcional_todos_deben
+        )
+
+        self.assertIsNone(
+            self.grupo.fecha_deteccion_todos_deben
+        )
+
+        self.assertFalse(
+            ClosingBalance.objects.filter(
+                grupo=self.grupo
+            ).exists()
+        )
+
+        self.assertFalse(
+            Debt.objects.filter(
+                grupo=self.grupo
+            ).exists()
+        )
+
+        self.assertFalse(
+            ActivityHistory.objects.filter(
+                grupo=self.grupo,
+                tipo_accion=(
+                    ActivityHistory
+                    .TIPO_CASO_TODOS_DEBEN_DETECTADO
+                ),
+            ).exists()
+        )
+
+    def test_informacion_permanece_disponible_despues_cierre(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        respuestas = [
+            self.client.get(
+                self.url_saldos
+            ),
+            self.client.get(
+                self.url_deudas
+            ),
+            self.client.get(
+                self.url_mi_deuda
+            ),
+            self.client.get(
+                self.url_historial
+            ),
+        ]
+
+        for response in respuestas:
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_200_OK,
+            )
+
+        detalle = self.client.get(
+            f"/api/grupos/{self.grupo.id}/"
+        )
+
+        self.assertEqual(
+            detalle.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertTrue(
+            detalle.data[
+                "caso_excepcional_todos_deben"
+            ]
+        )
+
+        self.assertIsNotNone(
+            detalle.data[
+                "fecha_deteccion_todos_deben"
+            ]
+        )
+
+        self.assertEqual(
+            detalle.data[
+                "mensaje_caso_todos_deben"
+            ],
+            (
+                "Todos los participantes con obligaciones "
+                "mantienen saldos pendientes."
+            ),
+        )
+
+    def test_externo_no_puede_consultar_deudas_del_caso(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        self.client.force_authenticate(
+            user=self.externo
+        )
+
+        for ruta in [
+            self.url_saldos,
+            self.url_deudas,
+            self.url_mi_deuda,
+            self.url_revision,
+        ]:
+            response = self.client.get(
+                ruta
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
+
