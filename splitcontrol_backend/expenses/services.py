@@ -23,73 +23,76 @@ def calcular_balances_grupo(grupo):
         .annotate(total=Sum("monto_asignado"))
     )
 
-    pagos_realizados_agrupados = (
+    aportes_agrupados = (
         Payment.objects
         .filter(grupo=grupo)
         .values("pagador_id")
         .annotate(total=Sum("monto"))
     )
 
-    pagos_recibidos_agrupados = (
-        Payment.objects
-        .filter(grupo=grupo)
-        .values("receptor_id")
-        .annotate(total=Sum("monto"))
-    )
-
     asignado_por_participante = {
-        item["participante_id"]: item["total"] or CERO
+        item["participante_id"]: (
+            item["total"] or CERO
+        ).quantize(DOS_DECIMALES)
         for item in valores_asignados
     }
 
-    pagos_realizados_por_participante = {
-        item["pagador_id"]: item["total"] or CERO
-        for item in pagos_realizados_agrupados
+    aportado_por_participante = {
+        item["pagador_id"]: (
+            item["total"] or CERO
+        ).quantize(DOS_DECIMALES)
+        for item in aportes_agrupados
     }
 
-    pagos_recibidos_por_participante = {
-        item["receptor_id"]: item["total"] or CERO
-        for item in pagos_recibidos_agrupados
-    }
+    participantes_ids = set(
+        grupo.participantes.values_list(
+            "id",
+            flat=True,
+        )
+    )
 
-    balances = []
+    participantes_ids.update(
+        asignado_por_participante.keys()
+    )
+
+    participantes_ids.update(
+        aportado_por_participante.keys()
+    )
 
     participantes = (
-        grupo.participantes
-        .all()
+        User.objects
+        .filter(id__in=participantes_ids)
         .order_by("id")
     )
 
+    balances = []
+
     for participante in participantes:
-        total_pagado = CERO
-
-        total_correspondiente = asignado_por_participante.get(
-            participante.id,
-            CERO,
+        total_correspondiente = (
+            asignado_por_participante.get(
+                participante.id,
+                CERO,
+            )
         ).quantize(DOS_DECIMALES)
 
-        pagos_realizados = pagos_realizados_por_participante.get(
-            participante.id,
-            CERO,
-        ).quantize(DOS_DECIMALES)
-
-        pagos_recibidos = pagos_recibidos_por_participante.get(
-            participante.id,
-            CERO,
+        total_aportado = (
+            aportado_por_participante.get(
+                participante.id,
+                CERO,
+            )
         ).quantize(DOS_DECIMALES)
 
         balance = (
-            -total_correspondiente
-            + pagos_realizados
-            - pagos_recibidos
+            total_aportado
+            - total_correspondiente
         ).quantize(DOS_DECIMALES)
 
         balances.append({
             "participante": participante,
-            "total_pagado": total_pagado,
+            "total_pagado": total_aportado,
             "total_correspondiente": total_correspondiente,
-            "pagos_realizados": pagos_realizados,
-            "pagos_recibidos": pagos_recibidos,
+            "pagos_realizados": total_aportado,
+            "pagos_recibidos": CERO,
             "balance": balance,
         })
 
@@ -213,15 +216,6 @@ def calcular_resumen_economico_grupo(grupo):
 
     participantes_ids.update(
         aporte_por_participante.keys()
-    )
-
-    participantes_ids.update(
-        Payment.objects
-        .filter(grupo=grupo)
-        .values_list(
-            "receptor_id",
-            flat=True,
-        )
     )
 
     participantes_activos_ids = set(

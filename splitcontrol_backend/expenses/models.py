@@ -401,12 +401,6 @@ class Payment(models.Model):
         related_name="pagos_realizados",
     )
 
-    receptor = models.ForeignKey(
-        User,
-        on_delete=models.PROTECT,
-        related_name="pagos_recibidos",
-    )
-
     monto = models.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -441,23 +435,9 @@ class Payment(models.Model):
             "-fecha_registro",
         ]
 
-        constraints = [
-            models.CheckConstraint(
-                condition=~models.Q(
-                    pagador=models.F(
-                        "receptor"
-                    )
-                ),
-                name=(
-                    "pago_pagador_receptor_"
-                    "diferentes"
-                ),
-            )
-        ]
-
     def __str__(self):
         return (
-            f"{self.pagador.username} pagó "
-            f"${self.monto} a "
-            f"{self.receptor.username}"
+            f"{self.pagador.username} aportó "
+            f"${self.monto} en "
+            f"{self.grupo.nombre}"
         )

@@ -481,43 +481,46 @@ class ActualizacionBalancesAlRegistrarGastoTest(APITestCase):
             Decimal("60.00"),
         )
 
-class RegistroPagoTest(APITestCase):
+class RegistroPagoPropioSC51Test(APITestCase):
 
     def setUp(self):
         self.fernando = User.objects.create_user(
-            username="fernando_sc46_pago",
-            email="fernando_sc46_pago@example.com",
+            username="fernando_sc51",
+            email="fernando_sc51@example.com",
             password="Prueba123",
         )
 
         self.carlita = User.objects.create_user(
-            username="carlita_sc46_pago",
-            email="carlita_sc46_pago@example.com",
+            username="carlita_sc51",
+            email="carlita_sc51@example.com",
             password="Prueba123",
         )
 
         self.damarys = User.objects.create_user(
-            username="damarys_sc46_pago",
-            email="damarys_sc46_pago@example.com",
+            username="damarys_sc51",
+            email="damarys_sc51@example.com",
             password="Prueba123",
         )
 
         self.usuario_externo = User.objects.create_user(
-            username="externo_sc46_pago",
-            email="externo_sc46_pago@example.com",
+            username="externo_sc51",
+            email="externo_sc51@example.com",
             password="Prueba123",
         )
 
+        ahora = timezone.now()
+
         self.grupo = Group.objects.create(
-            nombre="Grupo pagos SC-46",
-            descripcion="Pruebas de pagos propios",
+            nombre="Actividad activa SC-51",
+            descripcion="Registro de pagos propios",
             creador=self.fernando,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
         )
 
         self.grupo.participantes.add(
             self.fernando,
             self.carlita,
-            self.damarys,
         )
 
         GroupMembership.objects.create(
@@ -530,10 +533,20 @@ class RegistroPagoTest(APITestCase):
             usuario=self.carlita,
         )
 
-        GroupMembership.objects.create(
+        membresia_retirada = GroupMembership.objects.create(
             grupo=self.grupo,
             usuario=self.damarys,
         )
+        membresia_retirada.retirar()
+
+        self.gasto = Expense.objects.create(
+            grupo=self.grupo,
+            descripcion="Gasto común SC-51",
+            monto=Decimal("40.00"),
+            fecha_gasto="2026-07-25",
+            registrado_por=self.fernando,
+        )
+        self.gasto.sincronizar_integrantes_activos()
 
         self.url = (
             f"/api/grupos/{self.grupo.id}/pagos/"
@@ -543,11 +556,35 @@ class RegistroPagoTest(APITestCase):
             user=self.fernando
         )
 
-    def test_registrar_pago_propio_correctamente(self):
+    def crear_grupo_no_activo(
+        self,
+        nombre,
+        fecha_inicio=None,
+        fecha_fin=None,
+    ):
+        grupo = Group.objects.create(
+            nombre=nombre,
+            descripcion="Actividad no habilitada para pagos",
+            creador=self.fernando,
+            fecha_inicio=fecha_inicio,
+            fecha_fin=fecha_fin,
+        )
+
+        grupo.participantes.add(
+            self.fernando
+        )
+
+        GroupMembership.objects.create(
+            grupo=grupo,
+            usuario=self.fernando,
+        )
+
+        return grupo
+
+    def test_participante_activo_registra_pago_propio(self):
         response = self.client.post(
             self.url,
             {
-                "receptor_id": self.carlita.id,
                 "monto": "15.50",
                 "fecha_pago": "2026-07-25",
             },
@@ -561,7 +598,7 @@ class RegistroPagoTest(APITestCase):
 
         self.assertEqual(
             response.data["mensaje"],
-            "Pago registrado correctamente.",
+            "Pago propio registrado correctamente.",
         )
 
         self.assertEqual(
@@ -582,8 +619,8 @@ class RegistroPagoTest(APITestCase):
         )
 
         self.assertEqual(
-            pago.receptor,
-            self.carlita,
+            pago.registrado_por,
+            self.fernando,
         )
 
         self.assertEqual(
@@ -592,26 +629,30 @@ class RegistroPagoTest(APITestCase):
         )
 
         self.assertEqual(
-            pago.registrado_por,
-            self.fernando,
+            pago.fecha_pago.isoformat(),
+            "2026-07-25",
         )
 
         self.assertEqual(
             response.data["pago"]["pagador"]["username"],
-            "fernando_sc46_pago",
+            "fernando_sc51",
         )
 
-        self.assertEqual(
-            response.data["pago"]["receptor"]["username"],
-            "carlita_sc46_pago",
+        self.assertNotIn(
+            "receptor",
+            response.data["pago"],
         )
 
-    def test_pagador_id_enviado_manualmente_es_ignorado(self):
+        self.assertNotIn(
+            "receptor_id",
+            response.data["pago"],
+        )
+
+    def test_pagador_se_asigna_desde_usuario_autenticado(self):
         response = self.client.post(
             self.url,
             {
-                "pagador_id": self.damarys.id,
-                "receptor_id": self.carlita.id,
+                "pagador_id": self.carlita.id,
                 "monto": "8.00",
                 "fecha_pago": "2026-07-25",
             },
@@ -630,68 +671,20 @@ class RegistroPagoTest(APITestCase):
             self.fernando,
         )
 
+        self.assertEqual(
+            pago.registrado_por,
+            self.fernando,
+        )
+
         self.assertNotEqual(
             pago.pagador,
-            self.damarys,
-        )
-
-    def test_no_permite_pago_a_la_misma_persona(self):
-        response = self.client.post(
-            self.url,
-            {
-                "receptor_id": self.fernando.id,
-                "monto": "10.00",
-                "fecha_pago": "2026-07-25",
-            },
-            format="json",
-        )
-
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_400_BAD_REQUEST,
-        )
-
-        self.assertIn(
-            "receptor_id",
-            response.data,
-        )
-
-        self.assertEqual(
-            Payment.objects.count(),
-            0,
-        )
-
-    def test_receptor_debe_pertenecer_al_grupo(self):
-        response = self.client.post(
-            self.url,
-            {
-                "receptor_id": self.usuario_externo.id,
-                "monto": "10.00",
-                "fecha_pago": "2026-07-25",
-            },
-            format="json",
-        )
-
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_400_BAD_REQUEST,
-        )
-
-        self.assertIn(
-            "receptor_id",
-            response.data,
-        )
-
-        self.assertEqual(
-            Payment.objects.count(),
-            0,
+            self.carlita,
         )
 
     def test_monto_debe_ser_mayor_que_cero(self):
         response = self.client.post(
             self.url,
             {
-                "receptor_id": self.carlita.id,
                 "monto": "0.00",
                 "fecha_pago": "2026-07-25",
             },
@@ -713,7 +706,31 @@ class RegistroPagoTest(APITestCase):
             0,
         )
 
-    def test_participante_activo_puede_registrar_su_pago(self):
+    def test_fecha_del_pago_es_obligatoria(self):
+        response = self.client.post(
+            self.url,
+            {
+                "monto": "10.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "fecha_pago",
+            response.data,
+        )
+
+        self.assertEqual(
+            Payment.objects.count(),
+            0,
+        )
+
+    def test_otro_participante_activo_registra_su_pago(self):
         self.client.force_authenticate(
             user=self.carlita
         )
@@ -721,7 +738,6 @@ class RegistroPagoTest(APITestCase):
         response = self.client.post(
             self.url,
             {
-                "receptor_id": self.fernando.id,
                 "monto": "10.00",
                 "fecha_pago": "2026-07-25",
             },
@@ -745,16 +761,111 @@ class RegistroPagoTest(APITestCase):
             self.carlita,
         )
 
-    def test_usuario_externo_no_puede_registrar_pago(self):
-        self.client.force_authenticate(
-            user=self.usuario_externo
+    def test_retirado_y_externo_no_pueden_registrar_pago(self):
+        for usuario in [
+            self.damarys,
+            self.usuario_externo,
+        ]:
+            self.client.force_authenticate(
+                user=usuario
+            )
+
+            response = self.client.post(
+                self.url,
+                {
+                    "monto": "10.00",
+                    "fecha_pago": "2026-07-25",
+                },
+                format="json",
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
+
+        self.assertEqual(
+            Payment.objects.count(),
+            0,
+        )
+
+    def test_solo_actividad_activa_permite_registrar_pago(self):
+        ahora = timezone.now()
+
+        grupos_no_activos = [
+            self.crear_grupo_no_activo(
+                nombre="Actividad programada SC-51",
+                fecha_inicio=ahora + timedelta(days=1),
+                fecha_fin=ahora + timedelta(days=2),
+            ),
+            self.crear_grupo_no_activo(
+                nombre="Actividad cerrada SC-51",
+                fecha_inicio=ahora - timedelta(days=2),
+                fecha_fin=ahora - timedelta(days=1),
+            ),
+            self.crear_grupo_no_activo(
+                nombre="Actividad sin configurar SC-51",
+            ),
+        ]
+
+        for grupo in grupos_no_activos:
+            response = self.client.post(
+                f"/api/grupos/{grupo.id}/pagos/",
+                {
+                    "monto": "10.00",
+                    "fecha_pago": "2026-07-25",
+                },
+                format="json",
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+            self.assertEqual(
+                response.data["error"],
+                (
+                    "Solo se pueden registrar pagos mientras "
+                    "la actividad está activa."
+                ),
+            )
+
+        self.assertEqual(
+            Payment.objects.count(),
+            0,
+        )
+
+    def test_pago_actualiza_resumen_economico(self):
+        resumen_inicial = self.client.get(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                "resumen-economico/"
+            )
+        )
+
+        self.assertEqual(
+            Decimal(
+                resumen_inicial.data[
+                    "resumen"
+                ]["total_aportado"]
+            ),
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                resumen_inicial.data[
+                    "resumen"
+                ]["total_pendiente"]
+            ),
+            Decimal("40.00"),
         )
 
         response = self.client.post(
             self.url,
             {
-                "receptor_id": self.fernando.id,
-                "monto": "10.00",
+                "monto": "15.50",
                 "fecha_pago": "2026-07-25",
             },
             format="json",
@@ -762,13 +873,53 @@ class RegistroPagoTest(APITestCase):
 
         self.assertEqual(
             response.status_code,
-            status.HTTP_404_NOT_FOUND,
+            status.HTTP_201_CREATED,
+        )
+
+        resumen_actualizado = self.client.get(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                "resumen-economico/"
+            )
         )
 
         self.assertEqual(
-            Payment.objects.count(),
-            0,
+            Decimal(
+                resumen_actualizado.data[
+                    "resumen"
+                ]["total_aportado"]
+            ),
+            Decimal("15.50"),
         )
+
+        self.assertEqual(
+            Decimal(
+                resumen_actualizado.data[
+                    "resumen"
+                ]["total_pendiente"]
+            ),
+            Decimal("24.50"),
+        )
+
+        cuotas = {
+            cuota["participante"]["username"]: cuota
+            for cuota in resumen_actualizado.data["cuotas"]
+        }
+
+        self.assertEqual(
+            Decimal(
+                cuotas["fernando_sc51"]["total_aportado"]
+            ),
+            Decimal("15.50"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                cuotas["fernando_sc51"]["saldo_pendiente"]
+            ),
+            Decimal("4.50"),
+        )
+
 
 class VigenciaEstadoActividadTest(APITestCase):
 
@@ -1715,7 +1866,6 @@ class ConsultaActividadesCompartidasTest(APITestCase):
         response_pago = self.client.post(
             f"/api/grupos/{self.grupo.id}/pagos/",
             {
-                "receptor_id": self.fernando.id,
                 "monto": "5.00",
                 "fecha_pago": "2026-07-25",
             },
@@ -1849,7 +1999,6 @@ class PermisosSegunRolEstadoTest(APITestCase):
             response_pago = self.client.post(
                 f"/api/grupos/{self.grupo_activo.id}/pagos/",
                 {
-                    "receptor_id": self.fernando.id,
                     "monto": "5.00",
                     "fecha_pago": "2026-07-25",
                 },
@@ -1896,7 +2045,6 @@ class PermisosSegunRolEstadoTest(APITestCase):
         response_pago = self.client.post(
             f"/api/grupos/{self.grupo_cerrado.id}/pagos/",
             {
-                "receptor_id": self.fernando.id,
                 "monto": "5.00",
                 "fecha_pago": "2026-07-25",
             },
@@ -2913,7 +3061,6 @@ class ResumenEconomicoCuotasSC50Test(APITestCase):
         Payment.objects.create(
             grupo=self.grupo,
             pagador=self.carlita,
-            receptor=self.andres,
             monto=Decimal("10.00"),
             fecha_pago="2026-07-22",
             registrado_por=self.carlita,
