@@ -1,5 +1,8 @@
+from decimal import Decimal
+
 from django.contrib.auth.models import User
 from django.db import transaction
+from django.db.models import Sum
 from rest_framework import serializers
 
 from .models import (
@@ -9,6 +12,10 @@ from .models import (
     GroupMembership,
     Payment,
 )
+
+
+CERO = Decimal("0.00")
+DOS_DECIMALES = Decimal("0.01")
 
 
 class UserSimpleSerializer(serializers.ModelSerializer):
@@ -399,6 +406,56 @@ class PaymentSerializer(
                 "pagador": (
                     "Solo un participante activo puede "
                     "registrar su propio pago."
+                )
+            })
+
+        cuota_total = (
+            ExpenseDivision.objects
+            .filter(
+                gasto__grupo=grupo,
+                participante=pagador,
+            )
+            .aggregate(
+                total=Sum("monto_asignado")
+            )["total"]
+            or CERO
+        ).quantize(DOS_DECIMALES)
+
+        total_aportado = (
+            Payment.objects
+            .filter(
+                grupo=grupo,
+                pagador=pagador,
+            )
+            .aggregate(
+                total=Sum("monto")
+            )["total"]
+            or CERO
+        ).quantize(DOS_DECIMALES)
+
+        saldo_pendiente = max(
+            cuota_total - total_aportado,
+            CERO,
+        ).quantize(DOS_DECIMALES)
+
+        if saldo_pendiente == CERO:
+            raise serializers.ValidationError({
+                "monto": (
+                    "Tu cuota ya se encuentra saldada."
+                )
+            })
+
+        monto = attrs.get(
+            "monto",
+            CERO,
+        ).quantize(DOS_DECIMALES)
+
+        if monto > saldo_pendiente:
+            raise serializers.ValidationError({
+                "monto": (
+                    "El monto del pago no puede superar "
+                    f"tu saldo pendiente de "
+                    f"${saldo_pendiente:.2f}."
                 )
             })
 
