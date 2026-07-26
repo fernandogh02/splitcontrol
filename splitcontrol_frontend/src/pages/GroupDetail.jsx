@@ -143,7 +143,6 @@ function GroupDetail() {
   const [registrandoGasto, setRegistrandoGasto] = useState(false);
 
   const [pagoData, setPagoData] = useState({
-    receptor_id: "",
     monto: "",
     fecha_pago: obtenerFechaActual(),
   });
@@ -224,8 +223,8 @@ function GroupDetail() {
   const actividadProgramada = grupo?.estado === "programada";
   const actividadActiva = grupo?.estado === "activa";
   const actividadCerrada = grupo?.estado === "cerrada";
-  const puedeRegistrarOperaciones =
-    Boolean(grupo) && !actividadCerrada;
+  const puedeRegistrarPagos =
+    Boolean(grupo) && actividadActiva;
   const puedeRegistrarGastos =
     Boolean(grupo) && actividadActiva;
   const usuarioActual = grupo?.participantes?.find(
@@ -1003,21 +1002,6 @@ function GroupDetail() {
     setMensaje("");
     setError("");
 
-    if (!pagoData.receptor_id) {
-      setErrorPago("Selecciona quién recibe el pago.");
-      return;
-    }
-
-    if (
-      usuarioActual &&
-      Number(pagoData.receptor_id) === usuarioActual.id
-    ) {
-      setErrorPago(
-        "No puedes registrarte a ti mismo como receptor."
-      );
-      return;
-    }
-
     if (!pagoData.monto || Number(pagoData.monto) <= 0) {
       setErrorPago("El monto del pago debe ser mayor que cero.");
       return;
@@ -1049,7 +1033,6 @@ function GroupDetail() {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            receptor_id: Number(pagoData.receptor_id),
             monto: pagoData.monto,
             fecha_pago: pagoData.fecha_pago,
           }),
@@ -1074,13 +1057,12 @@ function GroupDetail() {
       }
 
       setPagoData({
-        receptor_id: "",
         monto: "",
         fecha_pago: obtenerFechaActual(),
       });
 
       setMensajePago(
-        data.mensaje || "Pago registrado correctamente."
+        data.mensaje || "Pago propio registrado correctamente."
       );
 
       await Promise.all([
@@ -1514,14 +1496,6 @@ function GroupDetail() {
         data.grupo?.total_gastos || totalGastos
       );
 
-      setPagoData((datosActuales) => ({
-        ...datosActuales,
-        receptor_id:
-          Number(datosActuales.receptor_id) === participanteId
-            ? ""
-            : datosActuales.receptor_id,
-      }));
-
       setNotasParticipantes((notasActuales) => {
         const nuevasNotas = { ...notasActuales };
         delete nuevasNotas[participanteId];
@@ -1594,7 +1568,7 @@ function GroupDetail() {
         </div>
 
         <div className="sidebar-bottom">
-          {puedeRegistrarOperaciones && (
+          {puedeRegistrarPagos && (
             <button
               type="button"
               className="btn btn-primary w-100 mb-3"
@@ -2790,19 +2764,19 @@ function GroupDetail() {
                         )}
                       </div>
 
-                      {puedeRegistrarOperaciones && (
+                      {puedeRegistrarPagos && (
                         <div
                           id="registrar-pago"
                           className="mt-5 pt-4 border-top"
                         >
                           <div>
                             <h5 className="mb-1">
-                              Registrar pago propio
+                              Registrar aporte propio
                             </h5>
 
                             <small className="text-muted">
-                              Registra un pago que tú realizaste
-                              a otro participante del grupo.
+                              Registra un aporte realizado por ti
+                              para cubrir tu cuota de la actividad.
                             </small>
                           </div>
 
@@ -2824,16 +2798,6 @@ function GroupDetail() {
                             </div>
                           )}
 
-                          {grupo.participantes?.length < 2 && (
-                            <div
-                              className="alert alert-warning mt-3"
-                              role="alert"
-                            >
-                              El grupo necesita al menos dos
-                              participantes para registrar un pago.
-                            </div>
-                          )}
-
                           <form
                             onSubmit={registrarPago}
                             className="mt-3"
@@ -2841,7 +2805,7 @@ function GroupDetail() {
                             <div className="row">
                               <div className="col-md-6 mb-3">
                                 <label className="form-label">
-                                  Pago realizado por
+                                  Aporte registrado por
                                 </label>
 
                                 <div className="form-control bg-light">
@@ -2851,52 +2815,14 @@ function GroupDetail() {
                                 </div>
 
                                 <small className="text-muted">
-                                  El pago se registrará
+                                  El aporte se registrará
                                   automáticamente a tu nombre.
                                 </small>
                               </div>
 
                               <div className="col-md-6 mb-3">
                                 <label className="form-label">
-                                  ¿Quién recibe el pago?
-                                </label>
-
-                                <select
-                                  name="receptor_id"
-                                  className="form-control"
-                                  value={pagoData.receptor_id}
-                                  onChange={handlePagoChange}
-                                  disabled={registrandoPago}
-                                  required
-                                >
-                                  <option value="">
-                                    Selecciona al participante que
-                                    recibe
-                                  </option>
-
-                                  {grupo.participantes
-                                    ?.filter(
-                                      (participante) =>
-                                        participante.username !==
-                                        username
-                                    )
-                                    .map((participante) => (
-                                      <option
-                                        key={participante.id}
-                                        value={participante.id}
-                                      >
-                                        {
-                                          participante.nombre_completo
-                                        }{" "}
-                                        (@{participante.username})
-                                      </option>
-                                    ))}
-                                </select>
-                              </div>
-
-                              <div className="col-md-6 mb-3">
-                                <label className="form-label">
-                                  Monto del pago
+                                  Monto del aporte
                                 </label>
 
                                 <input
@@ -2932,22 +2858,18 @@ function GroupDetail() {
 
                             <div className="d-flex justify-content-between align-items-center gap-3 mt-2">
                               <small className="text-muted">
-                                Nadie puede registrar un pago en
-                                nombre de otro integrante.
+                                Cada participante registra únicamente
+                                sus propios aportes.
                               </small>
 
                               <button
                                 type="submit"
                                 className="btn btn-primary"
-                                disabled={
-                                  registrandoPago ||
-                                  !grupo.participantes ||
-                                  grupo.participantes.length < 2
-                                }
+                                disabled={registrandoPago}
                               >
                                 {registrandoPago
-                                  ? "Registrando pago..."
-                                  : "Registrar mi pago"}
+                                  ? "Registrando aporte..."
+                                  : "Registrar mi aporte"}
                               </button>
                             </div>
                           </form>

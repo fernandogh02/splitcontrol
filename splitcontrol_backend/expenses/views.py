@@ -974,15 +974,36 @@ class PaymentCreateView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if grupo_esta_cerrado(grupo):
+        if not grupo_esta_activo(grupo):
             return Response(
                 {
                     "error": (
-                        "No se pueden registrar pagos porque "
-                        "la actividad está cerrada."
+                        "Solo se pueden registrar pagos mientras "
+                        "la actividad está activa."
                     )
                 },
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        membresia_activa = (
+            GroupMembership.objects
+            .filter(
+                grupo=grupo,
+                usuario=request.user,
+                activo=True,
+            )
+            .exists()
+        )
+
+        if not membresia_activa:
+            return Response(
+                {
+                    "error": (
+                        "Solo un participante activo puede "
+                        "registrar su propio pago."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
             )
 
         serializer = PaymentSerializer(
@@ -999,18 +1020,18 @@ class PaymentCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        pago = serializer.save(
-            grupo=grupo,
-            pagador=request.user,
-            registrado_por=request.user,
-        )
+        with transaction.atomic():
+            pago = serializer.save(
+                grupo=grupo,
+                pagador=request.user,
+                registrado_por=request.user,
+            )
 
         pago_registrado = (
             Payment.objects
             .select_related(
                 "grupo",
                 "pagador",
-                "receptor",
                 "registrado_por",
             )
             .get(id=pago.id)
@@ -1018,7 +1039,9 @@ class PaymentCreateView(APIView):
 
         return Response(
             {
-                "mensaje": "Pago registrado correctamente.",
+                "mensaje": (
+                    "Pago propio registrado correctamente."
+                ),
                 "pago": PaymentSerializer(
                     pago_registrado
                 ).data,
