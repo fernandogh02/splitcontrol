@@ -36,6 +36,8 @@ from .serializers import (
     ClosingBalanceSerializer,
     DebtResolutionRequestCreateSerializer,
     DebtResolutionRequestSerializer,
+    DebtResolutionReviewDecisionSerializer,
+    DebtResolutionReviewListResponseSerializer,
     DebtReviewAssignmentRequestSerializer,
     DebtReviewAssignmentSerializer,
     DebtSerializer,
@@ -2421,6 +2423,347 @@ class OwnDebtResolutionRequestDetailView(
                 ),
             },
             status=status.HTTP_200_OK,
+        )
+
+
+
+class GroupDebtResolutionRequestReviewListView(
+    APIView
+):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        grupo = (
+            Group.objects
+            .filter(id=pk)
+            .select_related("creador")
+            .first()
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Actividad no encontrada."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            solicitudes_pendientes = (
+                grupo
+                .obtener_solicitudes_resolucion_para_revision(
+                    request.user,
+                    solo_pendientes=True,
+                )
+            )
+        except ValidationError as error:
+            return Response(
+                respuesta_error_validacion(
+                    error
+                ),
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        total_solicitudes = (
+            grupo.solicitudes_resolucion_deudas
+            .count()
+        )
+
+        total_pendientes = (
+            solicitudes_pendientes.count()
+        )
+
+        mensaje = (
+            "Solicitudes pendientes de revisión "
+            "consultadas correctamente."
+            if total_pendientes > 0
+            else (
+                "No existen solicitudes pendientes "
+                "de revisión en esta actividad."
+            )
+        )
+
+        respuesta = {
+            "grupo_id": grupo.id,
+            "grupo_nombre": grupo.nombre,
+            "estado_actividad": grupo.estado,
+            "responsable": request.user,
+            "total_solicitudes": total_solicitudes,
+            "total_pendientes": total_pendientes,
+            "mensaje": mensaje,
+            "solicitudes": solicitudes_pendientes,
+        }
+
+        return Response(
+            DebtResolutionReviewListResponseSerializer(
+                respuesta,
+                context={
+                    "request": request,
+                },
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
+
+class GroupDebtResolutionRequestDecisionView(
+    APIView
+):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def obtener_solicitud(
+        self,
+        grupo_id,
+        solicitud_id,
+    ):
+        return (
+            DebtResolutionRequest.objects
+            .filter(
+                id=solicitud_id,
+                grupo_id=grupo_id,
+            )
+            .select_related(
+                "grupo",
+                "grupo__creador",
+                "deuda",
+                "deuda__participante",
+                "deuda__saldo_cierre",
+                "solicitante",
+                "revisado_por",
+            )
+            .first()
+        )
+
+    def get(
+        self,
+        request,
+        pk,
+        solicitud_id,
+    ):
+        solicitud = self.obtener_solicitud(
+            grupo_id=pk,
+            solicitud_id=solicitud_id,
+        )
+
+        if not solicitud:
+            return Response(
+                {
+                    "error": (
+                        "Solicitud no encontrada o no "
+                        "pertenece a esta actividad."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not solicitud.grupo.puede_revisar_solicitudes_deuda(
+            request.user
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Solo el responsable vigente "
+                        "puede consultar esta solicitud."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        return Response(
+            {
+                "mensaje": (
+                    "Solicitud consultada correctamente."
+                ),
+                "solicitud": (
+                    DebtResolutionRequestSerializer(
+                        solicitud,
+                        context={
+                            "request": request,
+                        },
+                    ).data
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def patch(
+        self,
+        request,
+        pk,
+        solicitud_id,
+    ):
+        solicitud = self.obtener_solicitud(
+            grupo_id=pk,
+            solicitud_id=solicitud_id,
+        )
+
+        if not solicitud:
+            return Response(
+                {
+                    "error": (
+                        "Solicitud no encontrada o no "
+                        "pertenece a esta actividad."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not solicitud.grupo.puede_revisar_solicitudes_deuda(
+            request.user
+        ):
+            return Response(
+                {
+                    "error": (
+                        "Solo el responsable vigente "
+                        "puede tomar una decisión sobre "
+                        "esta solicitud."
+                    )
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = (
+            DebtResolutionReviewDecisionSerializer(
+                data=request.data,
+                context={
+                    "request": request,
+                    "solicitud": solicitud,
+                },
+            )
+        )
+
+        if not serializer.is_valid():
+            return Response(
+                serializer.errors,
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            (
+                solicitud_revisada,
+                deuda_actualizada,
+                notificacion,
+            ) = serializer.save()
+        except ValidationError as error:
+            return Response(
+                respuesta_error_validacion(
+                    error
+                ),
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        solicitud_revisada.refresh_from_db()
+        deuda_actualizada.refresh_from_db()
+        deuda_actualizada.saldo_cierre.refresh_from_db()
+        notificacion.refresh_from_db()
+
+        resumen_advertencia = (
+            Debt.resumen_deudas_activas_usuario(
+                solicitud_revisada.solicitante
+            )
+        )
+
+        total_pendientes_actividad = (
+            DebtResolutionRequest.objects
+            .filter(
+                grupo_id=pk,
+                estado=(
+                    DebtResolutionRequest
+                    .ESTADO_PENDIENTE_REVISION
+                ),
+            )
+            .count()
+        )
+
+        fue_aprobada = (
+            solicitud_revisada.decision
+            == (
+                DebtResolutionRequest
+                .DECISION_APROBADA
+            )
+        )
+
+        mensaje = (
+            "Solicitud aprobada y deuda resuelta "
+            "correctamente."
+            if fue_aprobada
+            else (
+                "Solicitud rechazada. La deuda "
+                "permanece pendiente."
+            )
+        )
+
+        return Response(
+            {
+                "mensaje": mensaje,
+                "decision_guardada": True,
+                "solicitud": (
+                    DebtResolutionRequestSerializer(
+                        solicitud_revisada,
+                        context={
+                            "request": request,
+                        },
+                    ).data
+                ),
+                "deuda": DebtSerializer(
+                    deuda_actualizada,
+                    context={
+                        "request": request,
+                    },
+                ).data,
+                "advertencia_actualizada": {
+                    "usuario": {
+                        "id": (
+                            solicitud_revisada
+                            .solicitante_id
+                        ),
+                        "username": (
+                            solicitud_revisada
+                            .solicitante_username
+                        ),
+                    },
+                    "tiene_deudas_pendientes": (
+                        resumen_advertencia[
+                            "cantidad_deudas_pendientes"
+                        ] > 0
+                    ),
+                    "cantidad_deudas_pendientes": (
+                        resumen_advertencia[
+                            "cantidad_deudas_pendientes"
+                        ]
+                    ),
+                    "monto_total_pendiente": (
+                        f'{resumen_advertencia[
+                            "monto_total_pendiente"
+                        ]:.2f}'
+                    ),
+                },
+                "notificacion": (
+                    NotificationSerializer(
+                        notificacion,
+                        context={
+                            "request": request,
+                        },
+                    ).data
+                ),
+                "solicitudes_pendientes_actividad": (
+                    total_pendientes_actividad
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def put(
+        self,
+        request,
+        pk,
+        solicitud_id,
+    ):
+        return self.patch(
+            request,
+            pk,
+            solicitud_id,
         )
 
 

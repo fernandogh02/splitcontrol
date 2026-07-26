@@ -7,6 +7,8 @@ from .views import (
     ExpenseDetailView,
     GroupBalanceView,
     GroupClosingBalanceView,
+    GroupDebtResolutionRequestDecisionView,
+    GroupDebtResolutionRequestReviewListView,
     GroupDebtResponsibleView,
     GroupDebtReviewView,
     GroupDebtView,
@@ -84,6 +86,21 @@ urlpatterns = [
         "grupos/<int:pk>/responsable-deudas/",
         GroupDebtResponsibleView.as_view(),
         name="gestionar_responsable_deudas",
+    ),
+    path(
+        (
+            "grupos/<int:pk>/solicitudes-deuda/"
+        ),
+        GroupDebtResolutionRequestReviewListView.as_view(),
+        name="listar_solicitudes_deuda_para_revision",
+    ),
+    path(
+        (
+            "grupos/<int:pk>/solicitudes-deuda/"
+            "<int:solicitud_id>/"
+        ),
+        GroupDebtResolutionRequestDecisionView.as_view(),
+        name="decidir_solicitud_resolucion_deuda",
     ),
     path(
         "grupos/<int:pk>/mi-deuda/",
