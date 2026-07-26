@@ -223,13 +223,29 @@ function GroupDetail() {
   const actividadProgramada = grupo?.estado === "programada";
   const actividadActiva = grupo?.estado === "activa";
   const actividadCerrada = grupo?.estado === "cerrada";
-  const puedeRegistrarPagos =
-    Boolean(grupo) && actividadActiva;
-  const puedeRegistrarGastos =
-    Boolean(grupo) && actividadActiva;
   const usuarioActual = grupo?.participantes?.find(
     (participante) => participante.username === username
   );
+  const cuotaUsuarioActual = cuotasEconomicas.find(
+    (cuota) =>
+      cuota.participante?.username === username
+  );
+  const saldoPendienteUsuario = Number(
+    cuotaUsuarioActual?.saldo_pendiente || 0
+  );
+  const cuotaUsuarioSaldada =
+    cuotaUsuarioActual?.estado === "saldado" ||
+    saldoPendienteUsuario <= 0;
+  const puedeRegistrarPagos =
+    Boolean(grupo) &&
+    actividadActiva &&
+    Boolean(usuarioActual);
+  const puedeRegistrarAporte =
+    puedeRegistrarPagos &&
+    Boolean(cuotaUsuarioActual) &&
+    saldoPendienteUsuario > 0;
+  const puedeRegistrarGastos =
+    Boolean(grupo) && actividadActiva;
 
   const obtenerMembresias = useCallback(async () => {
     const token = localStorage.getItem("access");
@@ -1002,8 +1018,25 @@ function GroupDetail() {
     setMensaje("");
     setError("");
 
+    if (!cuotaUsuarioActual || cuotaUsuarioSaldada) {
+      setErrorPago("Tu cuota ya se encuentra saldada.");
+      return;
+    }
+
     if (!pagoData.monto || Number(pagoData.monto) <= 0) {
       setErrorPago("El monto del pago debe ser mayor que cero.");
+      return;
+    }
+
+    if (
+      Number(pagoData.monto) >
+      saldoPendienteUsuario
+    ) {
+      setErrorPago(
+        `El monto del pago no puede superar tu saldo pendiente de ${formatearMonto(
+          saldoPendienteUsuario
+        )}.`
+      );
       return;
     }
 
@@ -1568,7 +1601,7 @@ function GroupDetail() {
         </div>
 
         <div className="sidebar-bottom">
-          {puedeRegistrarPagos && (
+          {puedeRegistrarAporte && (
             <button
               type="button"
               className="btn btn-primary w-100 mb-3"
@@ -2780,6 +2813,104 @@ function GroupDetail() {
                             </small>
                           </div>
 
+                          {cargandoResumenEconomico ? (
+                            <div
+                              className="alert alert-light border mt-3"
+                              role="alert"
+                            >
+                              Consultando tu saldo pendiente...
+                            </div>
+                          ) : errorResumenEconomico ? (
+                            <div
+                              className="alert alert-danger mt-3"
+                              role="alert"
+                            >
+                              No fue posible consultar tu saldo
+                              pendiente. Actualiza el resumen
+                              económico e inténtalo nuevamente.
+                            </div>
+                          ) : cuotaUsuarioActual ? (
+                            <div className="row g-3 mt-1">
+                              <div className="col-md-4">
+                                <div className="border rounded p-3 h-100 bg-light">
+                                  <small className="text-muted d-block">
+                                    Tu cuota acumulada
+                                  </small>
+
+                                  <strong className="fs-5">
+                                    {formatearMonto(
+                                      cuotaUsuarioActual.cuota_total
+                                    )}
+                                  </strong>
+                                </div>
+                              </div>
+
+                              <div className="col-md-4">
+                                <div className="border rounded p-3 h-100 bg-light">
+                                  <small className="text-muted d-block">
+                                    Total que aportaste
+                                  </small>
+
+                                  <strong className="fs-5">
+                                    {formatearMonto(
+                                      cuotaUsuarioActual.total_aportado
+                                    )}
+                                  </strong>
+                                </div>
+                              </div>
+
+                              <div className="col-md-4">
+                                <div className="border rounded p-3 h-100 bg-light">
+                                  <small className="text-muted d-block">
+                                    Saldo disponible para pagar
+                                  </small>
+
+                                  <strong className="fs-5">
+                                    {formatearMonto(
+                                      cuotaUsuarioActual.saldo_pendiente
+                                    )}
+                                  </strong>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <div
+                              className="alert alert-warning mt-3"
+                              role="alert"
+                            >
+                              Todavía no tienes una cuota asignada
+                              en esta actividad.
+                            </div>
+                          )}
+
+                          {!cargandoResumenEconomico &&
+                            cuotaUsuarioActual &&
+                            cuotaUsuarioSaldada && (
+                              <div
+                                className="alert alert-success mt-3"
+                                role="alert"
+                              >
+                                Tu cuota ya se encuentra saldada.
+                                No necesitas registrar más aportes.
+                              </div>
+                            )}
+
+                          {!cargandoResumenEconomico &&
+                            puedeRegistrarAporte && (
+                              <div
+                                className="alert alert-info mt-3"
+                                role="alert"
+                              >
+                                Puedes registrar como máximo{" "}
+                                <strong>
+                                  {formatearMonto(
+                                    saldoPendienteUsuario
+                                  )}
+                                </strong>
+                                .
+                              </div>
+                            )}
+
                           {mensajePago && (
                             <div
                               className="alert alert-success mt-3"
@@ -2831,10 +2962,18 @@ function GroupDetail() {
                                   className="form-control"
                                   placeholder="0.00"
                                   min="0.01"
+                                  max={
+                                    puedeRegistrarAporte
+                                      ? cuotaUsuarioActual.saldo_pendiente
+                                      : undefined
+                                  }
                                   step="0.01"
                                   value={pagoData.monto}
                                   onChange={handlePagoChange}
-                                  disabled={registrandoPago}
+                                  disabled={
+                                    registrandoPago ||
+                                    !puedeRegistrarAporte
+                                  }
                                   required
                                 />
                               </div>
@@ -2850,7 +2989,10 @@ function GroupDetail() {
                                   className="form-control"
                                   value={pagoData.fecha_pago}
                                   onChange={handlePagoChange}
-                                  disabled={registrandoPago}
+                                  disabled={
+                                    registrandoPago ||
+                                    !puedeRegistrarAporte
+                                  }
                                   required
                                 />
                               </div>
@@ -2865,7 +3007,10 @@ function GroupDetail() {
                               <button
                                 type="submit"
                                 className="btn btn-primary"
-                                disabled={registrandoPago}
+                                disabled={
+                                  registrandoPago ||
+                                  !puedeRegistrarAporte
+                                }
                               >
                                 {registrandoPago
                                   ? "Registrando aporte..."

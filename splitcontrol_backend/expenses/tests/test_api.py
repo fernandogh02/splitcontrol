@@ -3457,3 +3457,407 @@ class ResumenEconomicoCuotasSC50Test(APITestCase):
             ),
             Decimal("20.00"),
         )
+
+
+class ValidacionSaldoPendienteSC52Test(APITestCase):
+
+    def setUp(self):
+        self.damarys = User.objects.create_user(
+            username="damarys_sc52",
+            email="damarys_sc52@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc52",
+            email="carlita_sc52@example.com",
+            password="Prueba123",
+        )
+
+        ahora = timezone.now()
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad activa SC-52",
+            descripcion="Validación de pagos contra saldo pendiente",
+            creador=self.damarys,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
+        )
+
+        self.grupo.participantes.add(
+            self.damarys,
+            self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.damarys,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.carlita,
+        )
+
+        self.gasto = Expense.objects.create(
+            grupo=self.grupo,
+            descripcion="Hospedaje SC-52",
+            monto=Decimal("40.00"),
+            fecha_gasto="2026-07-25",
+            registrado_por=self.damarys,
+        )
+        self.gasto.sincronizar_integrantes_activos()
+
+        self.url = (
+            f"/api/grupos/{self.grupo.id}/pagos/"
+        )
+
+        self.client.force_authenticate(
+            user=self.damarys
+        )
+
+    def registrar_pago(self, monto):
+        return self.client.post(
+            self.url,
+            {
+                "monto": monto,
+                "fecha_pago": "2026-07-25",
+            },
+            format="json",
+        )
+
+    def obtener_cuota_usuario(self, username):
+        response = self.client.get(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                "resumen-economico/"
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        return next(
+            cuota
+            for cuota in response.data["cuotas"]
+            if cuota["participante"]["username"] == username
+        )
+
+    def test_permite_pagos_parciales_hasta_cubrir_la_cuota(self):
+        primer_pago = self.registrar_pago(
+            "8.00"
+        )
+
+        segundo_pago = self.registrar_pago(
+            "7.00"
+        )
+
+        self.assertEqual(
+            primer_pago.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        self.assertEqual(
+            segundo_pago.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        total_pagado = sum(
+            Payment.objects.filter(
+                grupo=self.grupo,
+                pagador=self.damarys,
+            ).values_list(
+                "monto",
+                flat=True,
+            ),
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            total_pagado,
+            Decimal("15.00"),
+        )
+
+        cuota = self.obtener_cuota_usuario(
+            "damarys_sc52"
+        )
+
+        self.assertEqual(
+            Decimal(cuota["saldo_pendiente"]),
+            Decimal("5.00"),
+        )
+
+        self.assertEqual(
+            cuota["estado"],
+            "pendiente",
+        )
+
+    def test_rechaza_pago_mayor_al_saldo_pendiente(self):
+        pago_inicial = self.registrar_pago(
+            "15.00"
+        )
+
+        self.assertEqual(
+            pago_inicial.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        response = self.registrar_pago(
+            "5.01"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "monto",
+            response.data,
+        )
+
+        self.assertEqual(
+            str(response.data["monto"][0]),
+            (
+                "El monto del pago no puede superar "
+                "tu saldo pendiente de $5.00."
+            ),
+        )
+
+        self.assertEqual(
+            Payment.objects.filter(
+                grupo=self.grupo,
+                pagador=self.damarys,
+            ).count(),
+            1,
+        )
+
+    def test_permite_pago_igual_al_saldo_pendiente(self):
+        primer_pago = self.registrar_pago(
+            "15.00"
+        )
+
+        segundo_pago = self.registrar_pago(
+            "5.00"
+        )
+
+        self.assertEqual(
+            primer_pago.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        self.assertEqual(
+            segundo_pago.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        cuota = self.obtener_cuota_usuario(
+            "damarys_sc52"
+        )
+
+        self.assertEqual(
+            Decimal(cuota["cuota_total"]),
+            Decimal("20.00"),
+        )
+
+        self.assertEqual(
+            Decimal(cuota["total_aportado"]),
+            Decimal("20.00"),
+        )
+
+        self.assertEqual(
+            Decimal(cuota["saldo_pendiente"]),
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            cuota["estado"],
+            "saldado",
+        )
+
+    def test_usuario_saldado_no_puede_registrar_otro_pago(self):
+        pago_completo = self.registrar_pago(
+            "20.00"
+        )
+
+        self.assertEqual(
+            pago_completo.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        response = self.registrar_pago(
+            "1.00"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "monto",
+            response.data,
+        )
+
+        self.assertEqual(
+            str(response.data["monto"][0]),
+            "Tu cuota ya se encuentra saldada.",
+        )
+
+        self.assertEqual(
+            Payment.objects.filter(
+                grupo=self.grupo,
+                pagador=self.damarys,
+            ).count(),
+            1,
+        )
+
+    def test_validacion_es_independiente_para_cada_participante(self):
+        pago_damarys = self.registrar_pago(
+            "20.00"
+        )
+
+        self.assertEqual(
+            pago_damarys.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        pago_carlita = self.registrar_pago(
+            "10.00"
+        )
+
+        self.assertEqual(
+            pago_carlita.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        cuota_carlita = self.obtener_cuota_usuario(
+            "carlita_sc52"
+        )
+
+        self.assertEqual(
+            Decimal(cuota_carlita["cuota_total"]),
+            Decimal("20.00"),
+        )
+
+        self.assertEqual(
+            Decimal(cuota_carlita["total_aportado"]),
+            Decimal("10.00"),
+        )
+
+        self.assertEqual(
+            Decimal(cuota_carlita["saldo_pendiente"]),
+            Decimal("10.00"),
+        )
+
+        self.assertEqual(
+            cuota_carlita["estado"],
+            "pendiente",
+        )
+
+    def test_aumento_de_gasto_habilita_nuevo_saldo_pendiente(self):
+        pago_inicial = self.registrar_pago(
+            "20.00"
+        )
+
+        self.assertEqual(
+            pago_inicial.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        response_edicion = self.client.patch(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"gastos/{self.gasto.id}/"
+            ),
+            {
+                "monto": "60.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_edicion.status_code,
+            status.HTTP_200_OK,
+        )
+
+        nuevo_pago = self.registrar_pago(
+            "10.00"
+        )
+
+        self.assertEqual(
+            nuevo_pago.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        cuota = self.obtener_cuota_usuario(
+            "damarys_sc52"
+        )
+
+        self.assertEqual(
+            Decimal(cuota["cuota_total"]),
+            Decimal("30.00"),
+        )
+
+        self.assertEqual(
+            Decimal(cuota["total_aportado"]),
+            Decimal("30.00"),
+        )
+
+        self.assertEqual(
+            Decimal(cuota["saldo_pendiente"]),
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            cuota["estado"],
+            "saldado",
+        )
+
+    def test_pago_rechazado_no_modifica_resumen_economico(self):
+        pago_inicial = self.registrar_pago(
+            "12.00"
+        )
+
+        self.assertEqual(
+            pago_inicial.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        response = self.registrar_pago(
+            "8.01"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        cuota = self.obtener_cuota_usuario(
+            "damarys_sc52"
+        )
+
+        self.assertEqual(
+            Decimal(cuota["total_aportado"]),
+            Decimal("12.00"),
+        )
+
+        self.assertEqual(
+            Decimal(cuota["saldo_pendiente"]),
+            Decimal("8.00"),
+        )
+
+        self.assertEqual(
+            Payment.objects.filter(
+                grupo=self.grupo,
+                pagador=self.damarys,
+            ).count(),
+            1,
+        )
+
