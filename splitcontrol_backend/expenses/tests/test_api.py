@@ -3861,3 +3861,498 @@ class ValidacionSaldoPendienteSC52Test(APITestCase):
             1,
         )
 
+
+class ListarDetallePagosSC53Test(APITestCase):
+
+    def setUp(self):
+        self.damarys = User.objects.create_user(
+            username="damarys_sc53",
+            email="damarys_sc53@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc53",
+            email="carlita_sc53@example.com",
+            password="Prueba123",
+        )
+
+        self.fernando = User.objects.create_user(
+            username="fernando_sc53",
+            email="fernando_sc53@example.com",
+            password="Prueba123",
+        )
+
+        self.usuario_externo = User.objects.create_user(
+            username="externo_sc53",
+            email="externo_sc53@example.com",
+            password="Prueba123",
+        )
+
+        ahora = timezone.now()
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad de pagos SC-53",
+            descripcion="Listado y detalle de pagos",
+            creador=self.damarys,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
+        )
+
+        self.grupo.participantes.add(
+            self.damarys,
+            self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.damarys,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.carlita,
+        )
+
+        membresia_retirada = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.fernando,
+        )
+        membresia_retirada.retirar()
+
+        self.pago_antiguo = Payment.objects.create(
+            grupo=self.grupo,
+            pagador=self.damarys,
+            monto=Decimal("5.00"),
+            fecha_pago="2026-07-24",
+            registrado_por=self.damarys,
+        )
+
+        self.pago_reciente = Payment.objects.create(
+            grupo=self.grupo,
+            pagador=self.carlita,
+            monto=Decimal("12.50"),
+            fecha_pago="2026-07-25",
+            registrado_por=self.carlita,
+        )
+
+        fecha_antigua = ahora - timedelta(hours=2)
+        fecha_reciente = ahora - timedelta(hours=1)
+
+        Payment.objects.filter(
+            id=self.pago_antiguo.id
+        ).update(
+            fecha_registro=fecha_antigua
+        )
+
+        Payment.objects.filter(
+            id=self.pago_reciente.id
+        ).update(
+            fecha_registro=fecha_reciente
+        )
+
+        self.pago_antiguo.refresh_from_db()
+        self.pago_reciente.refresh_from_db()
+
+        self.otro_grupo = Group.objects.create(
+            nombre="Otra actividad SC-53",
+            descripcion="Actividad diferente",
+            creador=self.damarys,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
+        )
+
+        self.otro_grupo.participantes.add(
+            self.damarys
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.otro_grupo,
+            usuario=self.damarys,
+        )
+
+        self.pago_otro_grupo = Payment.objects.create(
+            grupo=self.otro_grupo,
+            pagador=self.damarys,
+            monto=Decimal("9.75"),
+            fecha_pago="2026-07-25",
+            registrado_por=self.damarys,
+        )
+
+        self.grupo_cerrado = Group.objects.create(
+            nombre="Actividad cerrada SC-53",
+            descripcion="Historial de pagos disponible",
+            creador=self.damarys,
+            fecha_inicio=ahora - timedelta(days=3),
+            fecha_fin=ahora - timedelta(days=1),
+        )
+
+        self.grupo_cerrado.participantes.add(
+            self.damarys,
+            self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo_cerrado,
+            usuario=self.damarys,
+        )
+
+        GroupMembership.objects.create(
+            grupo=self.grupo_cerrado,
+            usuario=self.carlita,
+        )
+
+        self.pago_cerrado = Payment.objects.create(
+            grupo=self.grupo_cerrado,
+            pagador=self.carlita,
+            monto=Decimal("20.00"),
+            fecha_pago="2026-07-20",
+            registrado_por=self.carlita,
+        )
+
+        self.url_listado = (
+            f"/api/grupos/{self.grupo.id}/pagos/"
+        )
+
+        self.client.force_authenticate(
+            user=self.damarys
+        )
+
+    def url_detalle(self, grupo, pago):
+        return (
+            f"/api/grupos/{grupo.id}/"
+            f"pagos/{pago.id}/"
+        )
+
+    def test_creador_puede_listar_pagos_de_la_actividad(self):
+        response = self.client.get(
+            self.url_listado
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["grupo_id"],
+            self.grupo.id,
+        )
+
+        self.assertEqual(
+            response.data["grupo_nombre"],
+            "Actividad de pagos SC-53",
+        )
+
+        self.assertEqual(
+            response.data["estado_actividad"],
+            Group.ESTADO_ACTIVA,
+        )
+
+        self.assertEqual(
+            response.data["total_registros"],
+            2,
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            "Pagos consultados correctamente.",
+        )
+
+    def test_participante_activo_puede_listar_y_consultar_detalle(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        listado = self.client.get(
+            self.url_listado
+        )
+
+        detalle = self.client.get(
+            self.url_detalle(
+                self.grupo,
+                self.pago_antiguo,
+            )
+        )
+
+        self.assertEqual(
+            listado.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            detalle.status_code,
+            status.HTTP_200_OK,
+        )
+
+    def test_listado_muestra_campos_y_orden_mas_reciente(self):
+        response = self.client.get(
+            self.url_listado
+        )
+
+        pagos = response.data["pagos"]
+
+        self.assertEqual(
+            len(pagos),
+            2,
+        )
+
+        self.assertEqual(
+            pagos[0]["id"],
+            self.pago_reciente.id,
+        )
+
+        self.assertEqual(
+            pagos[1]["id"],
+            self.pago_antiguo.id,
+        )
+
+        self.assertEqual(
+            pagos[0]["pagador"]["username"],
+            "carlita_sc53",
+        )
+
+        self.assertEqual(
+            pagos[0]["monto"],
+            "12.50",
+        )
+
+        self.assertEqual(
+            pagos[1]["monto"],
+            "5.00",
+        )
+
+        for pago in pagos:
+            self.assertIn(
+                "fecha_pago",
+                pago,
+            )
+
+            self.assertIn(
+                "fecha_registro",
+                pago,
+            )
+
+            self.assertIn(
+                "registrado_por",
+                pago,
+            )
+
+            self.assertRegex(
+                pago["monto"],
+                r"^\d+\.\d{2}$",
+            )
+
+    def test_detalle_muestra_toda_la_informacion_del_pago(self):
+        response = self.client.get(
+            self.url_detalle(
+                self.grupo,
+                self.pago_reciente,
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["grupo_id"],
+            self.grupo.id,
+        )
+
+        self.assertEqual(
+            response.data["grupo_nombre"],
+            "Actividad de pagos SC-53",
+        )
+
+        pago = response.data["pago"]
+
+        self.assertEqual(
+            pago["id"],
+            self.pago_reciente.id,
+        )
+
+        self.assertEqual(
+            pago["grupo"],
+            self.grupo.id,
+        )
+
+        self.assertEqual(
+            pago["pagador"]["username"],
+            "carlita_sc53",
+        )
+
+        self.assertEqual(
+            pago["monto"],
+            "12.50",
+        )
+
+        self.assertEqual(
+            pago["fecha_pago"],
+            "2026-07-25",
+        )
+
+        self.assertEqual(
+            pago["registrado_por"]["username"],
+            "carlita_sc53",
+        )
+
+        self.assertIsNotNone(
+            pago["fecha_registro"]
+        )
+
+    def test_actividad_cerrada_conserva_historial_de_pagos(self):
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        listado = self.client.get(
+            (
+                f"/api/grupos/{self.grupo_cerrado.id}/"
+                "pagos/"
+            )
+        )
+
+        detalle = self.client.get(
+            self.url_detalle(
+                self.grupo_cerrado,
+                self.pago_cerrado,
+            )
+        )
+
+        self.assertEqual(
+            listado.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            listado.data["estado_actividad"],
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertEqual(
+            listado.data["total_registros"],
+            1,
+        )
+
+        self.assertEqual(
+            detalle.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            detalle.data["estado_actividad"],
+            Group.ESTADO_CERRADA,
+        )
+
+    def test_retirado_y_externo_no_pueden_consultar_pagos(self):
+        for usuario in [
+            self.fernando,
+            self.usuario_externo,
+        ]:
+            self.client.force_authenticate(
+                user=usuario
+            )
+
+            listado = self.client.get(
+                self.url_listado
+            )
+
+            detalle = self.client.get(
+                self.url_detalle(
+                    self.grupo,
+                    self.pago_reciente,
+                )
+            )
+
+            self.assertEqual(
+                listado.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
+
+            self.assertEqual(
+                detalle.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
+
+    def test_pago_inexistente_o_de_otra_actividad_responde_404(self):
+        pago_inexistente = self.client.get(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                "pagos/999999/"
+            )
+        )
+
+        pago_otra_actividad = self.client.get(
+            self.url_detalle(
+                self.grupo,
+                self.pago_otro_grupo,
+            )
+        )
+
+        self.assertEqual(
+            pago_inexistente.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertEqual(
+            pago_otra_actividad.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        self.assertEqual(
+            pago_otra_actividad.data["error"],
+            (
+                "El pago no existe o no pertenece "
+                "a esta actividad."
+            ),
+        )
+
+    def test_listado_vacio_devuelve_mensaje_informativo(self):
+        ahora = timezone.now()
+
+        grupo_sin_pagos = Group.objects.create(
+            nombre="Actividad sin pagos SC-53",
+            descripcion="Listado vacío",
+            creador=self.damarys,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
+        )
+
+        grupo_sin_pagos.participantes.add(
+            self.damarys
+        )
+
+        GroupMembership.objects.create(
+            grupo=grupo_sin_pagos,
+            usuario=self.damarys,
+        )
+
+        response = self.client.get(
+            (
+                f"/api/grupos/{grupo_sin_pagos.id}/"
+                "pagos/"
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["total_registros"],
+            0,
+        )
+
+        self.assertEqual(
+            response.data["pagos"],
+            [],
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            "Todavía no existen pagos registrados.",
+        )
+

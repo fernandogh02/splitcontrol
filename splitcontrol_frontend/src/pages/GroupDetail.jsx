@@ -150,6 +150,18 @@ function GroupDetail() {
   const [mensajePago, setMensajePago] = useState("");
   const [errorPago, setErrorPago] = useState("");
 
+  const [pagos, setPagos] = useState([]);
+  const [cargandoPagos, setCargandoPagos] = useState(true);
+  const [errorPagos, setErrorPagos] = useState("");
+  const [mensajeListadoPagos, setMensajeListadoPagos] =
+    useState("");
+
+  const [detallePagoAbierto, setDetallePagoAbierto] = useState(false);
+  const [pagoSeleccionado, setPagoSeleccionado] = useState(null);
+  const [cargandoDetallePago, setCargandoDetallePago] =
+    useState(false);
+  const [errorDetallePago, setErrorDetallePago] = useState("");
+
   const [gastos, setGastos] = useState([]);
   const [totalGastos, setTotalGastos] = useState("0.00");
   const [cargandoGastos, setCargandoGastos] = useState(true);
@@ -373,6 +385,62 @@ function GroupDetail() {
     }
   }, [id]);
 
+  const obtenerPagos = useCallback(async () => {
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setErrorPagos(
+        "Tu sesión ha expirado. Inicia sesión nuevamente."
+      );
+      setCargandoPagos(false);
+      return;
+    }
+
+    try {
+      setCargandoPagos(true);
+      setErrorPagos("");
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/pagos/`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "No se pudo cargar el historial de pagos."
+        );
+      }
+
+      setPagos(
+        Array.isArray(data.pagos) ? data.pagos : []
+      );
+      setMensajeListadoPagos(data.mensaje || "");
+    } catch (errorListadoPagos) {
+      setPagos([]);
+      setMensajeListadoPagos("");
+      setErrorPagos(
+        errorListadoPagos.message ||
+          "No se pudo cargar el historial de pagos."
+      );
+    } finally {
+      setCargandoPagos(false);
+    }
+  }, [id]);
+
   const obtenerBalances = async () => {
     const token = localStorage.getItem("access");
 
@@ -580,6 +648,16 @@ function GroupDetail() {
   }, [obtenerResumenEconomico]);
 
   useEffect(() => {
+    const temporizador = setTimeout(() => {
+      obtenerPagos();
+    }, 0);
+
+    return () => {
+      clearTimeout(temporizador);
+    };
+  }, [obtenerPagos]);
+
+  useEffect(() => {
     const cargarBalancesIniciales = async () => {
       const token = localStorage.getItem("access");
 
@@ -637,6 +715,66 @@ function GroupDetail() {
 
     cargarBalancesIniciales();
   }, [id]);
+
+  const verDetallePago = async (pagoId) => {
+    const token = localStorage.getItem("access");
+
+    setDetallePagoAbierto(true);
+    setPagoSeleccionado(null);
+    setErrorDetallePago("");
+
+    if (!token) {
+      setErrorDetallePago(
+        "Tu sesión ha expirado. Inicia sesión nuevamente."
+      );
+      return;
+    }
+
+    try {
+      setCargandoDetallePago(true);
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/pagos/${pagoId}/`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data.error ||
+            "No se pudo cargar el detalle del pago."
+        );
+      }
+
+      setPagoSeleccionado(data.pago || null);
+    } catch (errorDetalle) {
+      setErrorDetallePago(
+        errorDetalle.message ||
+          "No se pudo cargar el detalle del pago."
+      );
+    } finally {
+      setCargandoDetallePago(false);
+    }
+  };
+
+  const cerrarDetallePago = () => {
+    setDetallePagoAbierto(false);
+    setPagoSeleccionado(null);
+    setErrorDetallePago("");
+    setCargandoDetallePago(false);
+  };
 
   const verDetalleGasto = async (gastoId) => {
     const token = localStorage.getItem("access");
@@ -1101,6 +1239,7 @@ function GroupDetail() {
       await Promise.all([
         obtenerBalances(),
         obtenerResumenEconomico(),
+        obtenerPagos(),
       ]);
     } catch (errorRegistroPago) {
       setErrorPago(
@@ -1705,7 +1844,13 @@ function GroupDetail() {
               </p>
             </header>
 
-            <section className="create-group-grid">
+            <section
+              className="create-group-grid"
+              style={{
+                gridTemplateColumns: "minmax(0, 1fr)",
+                width: "100%",
+              }}
+            >
               <div className="create-group-card">
                 <div className="d-flex justify-content-between align-items-center mb-3">
                   <h4 className="mb-0">
@@ -3021,6 +3166,126 @@ function GroupDetail() {
                         </div>
                       )}
 
+                      <div className="mt-5 pt-4 border-top">
+                        <div className="d-flex justify-content-between align-items-center gap-3">
+                          <div>
+                            <h5 className="mb-1">
+                              Historial de pagos
+                            </h5>
+
+                            <small className="text-muted">
+                              Consulta los aportes registrados en
+                              esta actividad, del más reciente al
+                              más antiguo.
+                            </small>
+                          </div>
+
+                          <button
+                            type="button"
+                            className="btn btn-outline-primary btn-sm"
+                            onClick={obtenerPagos}
+                            disabled={cargandoPagos}
+                          >
+                            {cargandoPagos
+                              ? "Actualizando..."
+                              : "Actualizar"}
+                          </button>
+                        </div>
+
+                        {cargandoPagos ? (
+                          <div
+                            className="alert alert-light border mt-3"
+                            role="alert"
+                          >
+                            Cargando historial de pagos...
+                          </div>
+                        ) : errorPagos ? (
+                          <div
+                            className="alert alert-danger mt-3"
+                            role="alert"
+                          >
+                            {errorPagos}
+                          </div>
+                        ) : pagos.length === 0 ? (
+                          <div
+                            className="alert alert-light border mt-3 mb-0"
+                            role="alert"
+                          >
+                            {mensajeListadoPagos ||
+                              "Todavía no existen pagos registrados."}
+                          </div>
+                        ) : (
+                          <>
+                            <div className="d-flex justify-content-between align-items-center mt-3">
+                              <small className="text-muted">
+                                Registros encontrados
+                              </small>
+
+                              <span className="badge bg-light text-dark border">
+                                {pagos.length}
+                              </span>
+                            </div>
+
+                            <div className="d-flex flex-column gap-3 mt-3">
+                              {pagos.map((pago) => (
+                                <div
+                                  key={pago.id}
+                                  className="border rounded p-3"
+                                >
+                                  <div className="d-flex justify-content-between align-items-start gap-3">
+                                    <div>
+                                      <strong>
+                                        {pago.pagador
+                                          ?.nombre_completo ||
+                                          pago.pagador
+                                            ?.username ||
+                                          "Participante"}
+                                      </strong>
+
+                                      {pago.pagador?.username && (
+                                        <small className="text-muted d-block">
+                                          @{pago.pagador.username}
+                                        </small>
+                                      )}
+
+                                      <small className="text-muted d-block mt-2">
+                                        Fecha del pago:{" "}
+                                        {formatearFecha(
+                                          pago.fecha_pago
+                                        )}
+                                      </small>
+
+                                      <small className="text-muted d-block">
+                                        Registrado:{" "}
+                                        {formatearFechaHora(
+                                          pago.fecha_registro
+                                        )}
+                                      </small>
+                                    </div>
+
+                                    <div className="text-end">
+                                      <strong className="fs-5 d-block">
+                                        {formatearMonto(pago.monto)}
+                                      </strong>
+
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline-primary btn-sm mt-2"
+                                        onClick={() =>
+                                          verDetallePago(pago.id)
+                                        }
+                                      >
+                                        Ver detalle
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
+                      </div>
+
                       {!actividadActiva &&
                         !actividadCerrada && (
                           <div
@@ -3388,61 +3653,7 @@ function GroupDetail() {
                 )}
               </div>
 
-              <aside className="benefits-column">
-                <div className="benefits-card">
-                  <h4>
-                    {actividadCerrada
-                      ? "Actividad cerrada"
-                      : esCreador
-                        ? "Gestión de la actividad"
-                        : "Participación activa"}
-                  </h4>
 
-                  {actividadCerrada ? (
-                    <ul>
-                      <li>
-                        Consulta gastos, divisiones y balances.
-                      </li>
-
-                      <li>
-                        Revisa participantes e historial.
-                      </li>
-
-                      <li>
-                        No se permiten nuevas operaciones.
-                      </li>
-                    </ul>
-                  ) : esCreador ? (
-                    <ul>
-                      <li>
-                        Administra los datos y participantes.
-                      </li>
-
-                      <li>
-                        Registra gastos comunes y pagos propios.
-                      </li>
-
-                      <li>
-                        Edita o elimina gastos registrados.
-                      </li>
-                    </ul>
-                  ) : (
-                    <ul>
-                      <li>
-                        Consulta toda la información compartida.
-                      </li>
-
-                      <li>
-                        Registra gastos comunes cuando la actividad esté activa.
-                      </li>
-
-                      <li>
-                        Registra únicamente tus propios pagos.
-                      </li>
-                    </ul>
-                  )}
-                </div>
-              </aside>
             </section>
           </>
         )}
@@ -3582,6 +3793,194 @@ function GroupDetail() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {detallePagoAbierto && (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
+          style={{
+            backgroundColor: "rgba(0, 0, 0, 0.55)",
+            zIndex: 1070,
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Detalle del pago"
+          onClick={cerrarDetallePago}
+        >
+          <div
+            className="bg-white rounded shadow-lg w-100"
+            style={{
+              maxWidth: "680px",
+              maxHeight: "90vh",
+              overflowY: "auto",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="d-flex justify-content-between align-items-center border-bottom p-4">
+              <div>
+                <h4 className="mb-1">Detalle del pago</h4>
+
+                <small className="text-muted">
+                  Información completa del aporte seleccionado.
+                </small>
+              </div>
+
+              <button
+                type="button"
+                className="btn-close"
+                aria-label="Cerrar"
+                onClick={cerrarDetallePago}
+              />
+            </div>
+
+            <div className="p-4">
+              {cargandoDetallePago ? (
+                <div
+                  className="alert alert-light border mb-0"
+                  role="alert"
+                >
+                  Cargando detalle del pago...
+                </div>
+              ) : errorDetallePago ? (
+                <div
+                  className="alert alert-danger mb-0"
+                  role="alert"
+                >
+                  {errorDetallePago}
+                </div>
+              ) : pagoSeleccionado ? (
+                <>
+                  <div className="d-flex justify-content-between align-items-start gap-3 mb-4">
+                    <div>
+                      <small className="text-muted">
+                        Actividad
+                      </small>
+
+                      <h5 className="mb-0">
+                        {grupo?.nombre || "Actividad"}
+                      </h5>
+                    </div>
+
+                    <strong className="fs-4">
+                      {formatearMonto(
+                        pagoSeleccionado.monto
+                      )}
+                    </strong>
+                  </div>
+
+                  <div className="row g-3">
+                    <div className="col-md-6">
+                      <div className="border rounded p-3 h-100 bg-light">
+                        <small className="text-muted d-block">
+                          Participante que pagó
+                        </small>
+
+                        <strong>
+                          {pagoSeleccionado.pagador
+                            ?.nombre_completo ||
+                            pagoSeleccionado.pagador
+                              ?.username ||
+                            "Sin información"}
+                        </strong>
+
+                        {pagoSeleccionado.pagador
+                          ?.username && (
+                          <small className="text-muted d-block">
+                            @
+                            {
+                              pagoSeleccionado.pagador
+                                .username
+                            }
+                          </small>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="col-md-6">
+                      <div className="border rounded p-3 h-100 bg-light">
+                        <small className="text-muted d-block">
+                          Fecha del pago
+                        </small>
+
+                        <strong>
+                          {formatearFecha(
+                            pagoSeleccionado.fecha_pago
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+
+                    <div className="col-md-6">
+                      <div className="border rounded p-3 h-100 bg-light">
+                        <small className="text-muted d-block">
+                          Registrado por
+                        </small>
+
+                        <strong>
+                          {pagoSeleccionado.registrado_por
+                            ?.nombre_completo ||
+                            pagoSeleccionado.registrado_por
+                              ?.username ||
+                            "Sin información"}
+                        </strong>
+
+                        {pagoSeleccionado.registrado_por
+                          ?.username && (
+                          <small className="text-muted d-block">
+                            @
+                            {
+                              pagoSeleccionado
+                                .registrado_por.username
+                            }
+                          </small>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="col-md-6">
+                      <div className="border rounded p-3 h-100 bg-light">
+                        <small className="text-muted d-block">
+                          Fecha de registro
+                        </small>
+
+                        <strong>
+                          {formatearFechaHora(
+                            pagoSeleccionado.fecha_registro
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className="alert alert-light border mt-4 mb-0"
+                    role="alert"
+                  >
+                    Este registro corresponde a un aporte propio
+                    realizado por el participante.
+                  </div>
+                </>
+              ) : (
+                <div
+                  className="alert alert-warning mb-0"
+                  role="alert"
+                >
+                  No se encontró información del pago.
+                </div>
+              )}
+            </div>
+
+            <div className="d-flex justify-content-end border-top p-4">
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={cerrarDetallePago}
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       )}
