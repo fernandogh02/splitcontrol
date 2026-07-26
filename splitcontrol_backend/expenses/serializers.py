@@ -799,6 +799,10 @@ class DebtResolutionRequestSerializer(
         read_only=True,
     )
 
+    actividad = serializers.SerializerMethodField()
+
+    deuda = serializers.SerializerMethodField()
+
     solicitante = UserSimpleSerializer(
         read_only=True,
     )
@@ -834,6 +838,10 @@ class DebtResolutionRequestSerializer(
         read_only=True,
     )
 
+    puede_revisar = serializers.SerializerMethodField()
+
+    resultado_deuda = serializers.SerializerMethodField()
+
     class Meta:
         model = DebtResolutionRequest
         fields = [
@@ -841,6 +849,8 @@ class DebtResolutionRequestSerializer(
             "deuda_id",
             "grupo_id",
             "grupo_nombre",
+            "actividad",
+            "deuda",
             "solicitante",
             "solicitante_id",
             "solicitante_username",
@@ -859,9 +869,85 @@ class DebtResolutionRequestSerializer(
             "fecha_actualizacion",
             "pendiente_revision",
             "puede_editarse",
+            "puede_revisar",
+            "resultado_deuda",
         ]
 
         read_only_fields = fields
+
+    def get_actividad(self, obj):
+        return {
+            "id": obj.grupo_id,
+            "nombre": obj.grupo_nombre,
+            "estado": obj.grupo.estado,
+            "fecha_cierre": (
+                obj.grupo.fecha_cierre_automatico
+            ),
+        }
+
+    def get_deuda(self, obj):
+        return {
+            "id": obj.deuda_id,
+            "participante": (
+                UserSimpleSerializer(
+                    obj.deuda.participante,
+                    context=self.context,
+                ).data
+            ),
+            "participante_username": (
+                obj.deuda.participante_username
+            ),
+            "monto_original": (
+                f"{obj.deuda.monto_original:.2f}"
+            ),
+            "saldo_pendiente": (
+                f"{obj.deuda.saldo_pendiente:.2f}"
+            ),
+            "estado": obj.deuda.estado,
+            "estado_display": (
+                obj.deuda.get_estado_display()
+            ),
+            "fecha_generacion": (
+                obj.deuda.fecha_generacion
+            ),
+            "fecha_resolucion": (
+                obj.deuda.fecha_resolucion
+            ),
+        }
+
+    def get_puede_revisar(self, obj):
+        request = self.context.get("request")
+
+        return bool(
+            request
+            and request.user.is_authenticated
+            and obj.pendiente_revision
+            and obj.grupo
+            .puede_revisar_solicitudes_deuda(
+                request.user
+            )
+        )
+
+    def get_resultado_deuda(self, obj):
+        if (
+            obj.estado
+            == DebtResolutionRequest.ESTADO_APROBADA
+        ):
+            return (
+                "La deuda fue resuelta."
+            )
+
+        if (
+            obj.estado
+            == DebtResolutionRequest.ESTADO_RECHAZADA
+        ):
+            return (
+                "La deuda permanece pendiente."
+            )
+
+        return (
+            "La solicitud está pendiente de revisión."
+        )
 
 
 class DebtResolutionRequestCreateSerializer(
@@ -1004,6 +1090,173 @@ class DebtResolutionRequestCreateSerializer(
             raise serializers.ValidationError({
                 "error": error.messages
             })
+
+
+class DebtResolutionReviewDecisionSerializer(
+    serializers.Serializer
+):
+    decision = serializers.ChoiceField(
+        choices=[
+            (
+                DebtResolutionRequest
+                .DECISION_APROBADA
+            ),
+            (
+                DebtResolutionRequest
+                .DECISION_RECHAZADA
+            ),
+        ],
+        required=True,
+    )
+
+    observacion = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        trim_whitespace=True,
+        max_length=2000,
+    )
+
+    def validate_observacion(self, value):
+        observacion = value.strip()
+
+        if not observacion:
+            raise serializers.ValidationError(
+                (
+                    "La observación o justificación "
+                    "de la decisión es obligatoria."
+                )
+            )
+
+        return observacion
+
+    def validate(self, attrs):
+        solicitud = self.context.get(
+            "solicitud"
+        )
+
+        request = self.context.get(
+            "request"
+        )
+
+        responsable = (
+            request.user
+            if request
+            and request.user.is_authenticated
+            else None
+        )
+
+        if not solicitud:
+            raise serializers.ValidationError({
+                "solicitud": (
+                    "No se pudo identificar "
+                    "la solicitud."
+                )
+            })
+
+        if not responsable:
+            raise serializers.ValidationError({
+                "responsable": (
+                    "No se pudo identificar "
+                    "al responsable."
+                )
+            })
+
+        if not solicitud.grupo.puede_revisar_solicitudes_deuda(
+            responsable
+        ):
+            raise serializers.ValidationError({
+                "responsable": (
+                    "Solo el responsable vigente "
+                    "de la actividad puede tomar "
+                    "esta decisión."
+                )
+            })
+
+        if (
+            solicitud.estado
+            != (
+                DebtResolutionRequest
+                .ESTADO_PENDIENTE_REVISION
+            )
+        ):
+            raise serializers.ValidationError({
+                "solicitud": (
+                    "La solicitud ya fue revisada "
+                    "y no puede decidirse nuevamente."
+                )
+            })
+
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        solicitud = self.context[
+            "solicitud"
+        ]
+
+        request = self.context[
+            "request"
+        ]
+
+        try:
+            return solicitud.revisar(
+                responsable=request.user,
+                decision=validated_data[
+                    "decision"
+                ],
+                observacion=validated_data[
+                    "observacion"
+                ],
+            )
+        except DjangoValidationError as error:
+            if hasattr(
+                error,
+                "message_dict",
+            ):
+                raise serializers.ValidationError(
+                    error.message_dict
+                )
+
+            raise serializers.ValidationError({
+                "error": error.messages
+            })
+
+
+class DebtResolutionReviewListResponseSerializer(
+    serializers.Serializer
+):
+    grupo_id = serializers.IntegerField(
+        read_only=True,
+    )
+
+    grupo_nombre = serializers.CharField(
+        read_only=True,
+    )
+
+    estado_actividad = serializers.CharField(
+        read_only=True,
+    )
+
+    responsable = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    total_solicitudes = serializers.IntegerField(
+        read_only=True,
+    )
+
+    total_pendientes = serializers.IntegerField(
+        read_only=True,
+    )
+
+    mensaje = serializers.CharField(
+        read_only=True,
+    )
+
+    solicitudes = DebtResolutionRequestSerializer(
+        many=True,
+        read_only=True,
+    )
 
 
 class DebtSerializer(

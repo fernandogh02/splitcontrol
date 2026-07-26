@@ -11766,4 +11766,1932 @@ class EnviarSolicitudResolucionEvidenciaSC64Test(
         self.assertFalse(
             DebtResolutionRequest.objects.exists()
         )
+class ResolucionDeudaFinalBaseMixin:
+    def setUp(self):
+        self.media_temporal = TemporaryDirectory()
+        self.configuracion_media = override_settings(
+            MEDIA_ROOT=self.media_temporal.name,
+            MEDIA_URL="/media/",
+        )
+        self.configuracion_media.enable()
 
+        self.addCleanup(
+            self.media_temporal.cleanup
+        )
+        self.addCleanup(
+            self.configuracion_media.disable
+        )
+
+        self.creador = User.objects.create_user(
+            username="creador_final",
+            email="creador_final@example.com",
+            password="Prueba123",
+        )
+
+        self.responsable = User.objects.create_user(
+            username="responsable_final",
+            email="responsable_final@example.com",
+            password="Prueba123",
+        )
+
+        self.solicitante = User.objects.create_user(
+            username="solicitante_final",
+            email="solicitante_final@example.com",
+            password="Prueba123",
+        )
+
+        self.otro_participante = User.objects.create_user(
+            username="otro_final",
+            email="otro_final@example.com",
+            password="Prueba123",
+        )
+
+        self.externo = User.objects.create_user(
+            username="externo_final",
+            email="externo_final@example.com",
+            password="Prueba123",
+        )
+
+        self.momento_base = timezone.now()
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad final de deudas",
+            descripcion=(
+                "Revisión, actualización y notificación "
+                "de solicitudes de deuda"
+            ),
+            creador=self.creador,
+            fecha_inicio=(
+                self.momento_base
+                - timedelta(days=4)
+            ),
+            fecha_fin=(
+                self.momento_base
+                - timedelta(days=2)
+            ),
+            fecha_cierre_automatico=(
+                self.momento_base
+                - timedelta(days=2)
+            ),
+            fecha_generacion_saldos=(
+                self.momento_base
+                - timedelta(days=2)
+            ),
+        )
+
+        self.grupo.participantes.add(
+            self.creador,
+            self.responsable,
+            self.solicitante,
+            self.otro_participante,
+        )
+
+        for usuario in [
+            self.creador,
+            self.responsable,
+            self.solicitante,
+            self.otro_participante,
+        ]:
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=usuario,
+            )
+
+        self.grupo.asignar_responsable_deudas(
+            responsable=self.responsable,
+            asignado_por=self.creador,
+            momento=(
+                self.momento_base
+                - timedelta(days=3)
+            ),
+        )
+
+        self.deuda = self.crear_deuda(
+            grupo=self.grupo,
+            usuario=self.solicitante,
+            monto=Decimal("40.00"),
+        )
+
+        self.deuda_otro = self.crear_deuda(
+            grupo=self.grupo,
+            usuario=self.otro_participante,
+            monto=Decimal("25.00"),
+        )
+
+        self.solicitud = self.crear_solicitud(
+            deuda=self.deuda,
+            solicitante=self.solicitante,
+            descripcion=(
+                "Adjunto el comprobante de pago "
+                "de la obligación."
+            ),
+            fecha_envio=(
+                self.momento_base
+                - timedelta(hours=2)
+            ),
+            nombre_archivo="comprobante_principal.pdf",
+        )
+
+        self.url_listado = (
+            f"/api/grupos/{self.grupo.id}/"
+            "solicitudes-deuda/"
+        )
+
+        self.url_detalle = (
+            f"/api/grupos/{self.grupo.id}/"
+            f"solicitudes-deuda/{self.solicitud.id}/"
+        )
+
+        self.client.force_authenticate(
+            user=self.responsable
+        )
+
+    def crear_deuda(
+        self,
+        grupo,
+        usuario,
+        monto,
+        estado=Debt.ESTADO_PENDIENTE,
+        saldo_pendiente=None,
+    ):
+        saldo_pendiente = (
+            monto
+            if saldo_pendiente is None
+            else saldo_pendiente
+        )
+
+        saldo = ClosingBalance.objects.create(
+            grupo=grupo,
+            grupo_nombre=grupo.nombre,
+            participante=usuario,
+            participante_username=usuario.username,
+            cuota_total=monto,
+            total_pagado=(
+                monto - saldo_pendiente
+            ),
+            saldo_pendiente=saldo_pendiente,
+            estado=(
+                ClosingBalance.ESTADO_SALDADO
+                if saldo_pendiente == Decimal("0.00")
+                else ClosingBalance.ESTADO_PENDIENTE
+            ),
+        )
+
+        return Debt.objects.create(
+            grupo=grupo,
+            grupo_nombre=grupo.nombre,
+            saldo_cierre=saldo,
+            participante=usuario,
+            participante_username=usuario.username,
+            monto_original=monto,
+            saldo_pendiente=saldo_pendiente,
+            estado=estado,
+            fecha_resolucion=(
+                self.momento_base
+                if estado == Debt.ESTADO_RESUELTA
+                else None
+            ),
+        )
+
+    def crear_solicitud(
+        self,
+        deuda,
+        solicitante,
+        descripcion,
+        fecha_envio=None,
+        nombre_archivo="comprobante.pdf",
+    ):
+        return DebtResolutionRequest.objects.create(
+            deuda=deuda,
+            grupo=deuda.grupo,
+            grupo_nombre=deuda.grupo_nombre,
+            solicitante=solicitante,
+            solicitante_username=solicitante.username,
+            descripcion=descripcion,
+            evidencia=SimpleUploadedFile(
+                nombre_archivo,
+                b"evidencia de prueba",
+                content_type="application/pdf",
+            ),
+            evidencia_nombre_original=nombre_archivo,
+            fecha_envio=(
+                fecha_envio
+                or timezone.now()
+            ),
+        )
+
+    def crear_deuda_en_otro_grupo(
+        self,
+        usuario,
+        monto,
+        nombre="Otra actividad con deuda",
+    ):
+        grupo = Group.objects.create(
+            nombre=nombre,
+            descripcion="Deuda adicional para advertencias",
+            creador=self.creador,
+            fecha_inicio=(
+                self.momento_base
+                - timedelta(days=8)
+            ),
+            fecha_fin=(
+                self.momento_base
+                - timedelta(days=6)
+            ),
+            fecha_cierre_automatico=(
+                self.momento_base
+                - timedelta(days=6)
+            ),
+            fecha_generacion_saldos=(
+                self.momento_base
+                - timedelta(days=6)
+            ),
+        )
+
+        return self.crear_deuda(
+            grupo=grupo,
+            usuario=usuario,
+            monto=monto,
+        )
+
+    def decidir(
+        self,
+        decision,
+        observacion=(
+            "La evidencia fue revisada "
+            "por el responsable."
+        ),
+        url=None,
+    ):
+        return self.client.patch(
+            url or self.url_detalle,
+            {
+                "decision": decision,
+                "observacion": observacion,
+            },
+            format="json",
+        )
+
+
+class RevisarSolicitudesResolucionSC65Test(
+    ResolucionDeudaFinalBaseMixin,
+    APITestCase,
+):
+    def test_responsable_visualiza_solicitudes_pendientes(
+        self,
+    ):
+        response = self.client.get(
+            self.url_listado
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["grupo_id"],
+            self.grupo.id,
+        )
+
+        self.assertEqual(
+            response.data["estado_actividad"],
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertEqual(
+            response.data["total_pendientes"],
+            1,
+        )
+
+        self.assertEqual(
+            response.data["solicitudes"][0]["id"],
+            self.solicitud.id,
+        )
+
+    def test_solicitud_muestra_datos_requeridos(
+        self,
+    ):
+        response = self.client.get(
+            self.url_detalle
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        solicitud = response.data["solicitud"]
+
+        self.assertEqual(
+            solicitud["solicitante"]["username"],
+            "solicitante_final",
+        )
+
+        self.assertEqual(
+            solicitud["actividad"]["id"],
+            self.grupo.id,
+        )
+
+        self.assertEqual(
+            solicitud["actividad"]["nombre"],
+            self.grupo.nombre,
+        )
+
+        self.assertEqual(
+            solicitud["deuda"]["id"],
+            self.deuda.id,
+        )
+
+        self.assertEqual(
+            solicitud["deuda"]["monto_original"],
+            "40.00",
+        )
+
+        self.assertEqual(
+            solicitud["deuda"]["saldo_pendiente"],
+            "40.00",
+        )
+
+        self.assertEqual(
+            solicitud["descripcion"],
+            (
+                "Adjunto el comprobante de pago "
+                "de la obligación."
+            ),
+        )
+
+        self.assertTrue(
+            solicitud["evidencia"]
+        )
+
+        self.assertEqual(
+            solicitud["evidencia_nombre_original"],
+            "comprobante_principal.pdf",
+        )
+
+        self.assertTrue(
+            solicitud["puede_revisar"]
+        )
+
+    def test_creador_consulta_cuando_tambien_es_responsable(
+        self,
+    ):
+        self.grupo.asignar_responsable_deudas(
+            responsable=self.creador,
+            asignado_por=self.creador,
+        )
+
+        self.client.force_authenticate(
+            user=self.creador
+        )
+
+        response = self.client.get(
+            self.url_listado
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["responsable"]["username"],
+            "creador_final",
+        )
+
+    def test_creador_sin_rol_responsable_no_puede_consultar(
+        self,
+    ):
+        self.client.force_authenticate(
+            user=self.creador
+        )
+
+        response = self.client.get(
+            self.url_listado
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_participante_sin_rol_no_puede_decidir(
+        self,
+    ):
+        self.client.force_authenticate(
+            user=self.otro_participante
+        )
+
+        response = self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        self.solicitud.refresh_from_db()
+        self.deuda.refresh_from_db()
+
+        self.assertEqual(
+            self.solicitud.estado,
+            (
+                DebtResolutionRequest
+                .ESTADO_PENDIENTE_REVISION
+            ),
+        )
+
+        self.assertEqual(
+            self.deuda.estado,
+            Debt.ESTADO_PENDIENTE,
+        )
+
+    def test_usuario_externo_no_consulta_ni_decide(
+        self,
+    ):
+        self.client.force_authenticate(
+            user=self.externo
+        )
+
+        listado = self.client.get(
+            self.url_listado
+        )
+
+        detalle = self.client.get(
+            self.url_detalle
+        )
+
+        decision = self.decidir(
+            DebtResolutionRequest.DECISION_RECHAZADA
+        )
+
+        for response in [
+            listado,
+            detalle,
+            decision,
+        ]:
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_403_FORBIDDEN,
+            )
+
+    def test_usuario_no_autenticado_no_accede(
+        self,
+    ):
+        self.client.force_authenticate(
+            user=None
+        )
+
+        respuestas = [
+            self.client.get(
+                self.url_listado
+            ),
+            self.client.get(
+                self.url_detalle
+            ),
+            self.client.patch(
+                self.url_detalle,
+                {
+                    "decision": "aprobada",
+                    "observacion": "Revisión.",
+                },
+                format="json",
+            ),
+        ]
+
+        for response in respuestas:
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_401_UNAUTHORIZED,
+            )
+
+    def test_listado_solo_incluye_solicitudes_pendientes(
+        self,
+    ):
+        aprobacion = self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        self.assertEqual(
+            aprobacion.status_code,
+            status.HTTP_200_OK,
+        )
+
+        solicitud_pendiente = self.crear_solicitud(
+            deuda=self.deuda_otro,
+            solicitante=self.otro_participante,
+            descripcion="Segunda solicitud pendiente.",
+            nombre_archivo="segunda.pdf",
+        )
+
+        response = self.client.get(
+            self.url_listado
+        )
+
+        ids = [
+            item["id"]
+            for item in response.data["solicitudes"]
+        ]
+
+        self.assertEqual(
+            response.data["total_solicitudes"],
+            2,
+        )
+
+        self.assertEqual(
+            response.data["total_pendientes"],
+            1,
+        )
+
+        self.assertEqual(
+            ids,
+            [solicitud_pendiente.id],
+        )
+
+        self.assertNotIn(
+            self.solicitud.id,
+            ids,
+        )
+
+    def test_solicitudes_se_ordenan_de_reciente_a_antigua(
+        self,
+    ):
+        solicitud_reciente = self.crear_solicitud(
+            deuda=self.deuda_otro,
+            solicitante=self.otro_participante,
+            descripcion="Solicitud más reciente.",
+            fecha_envio=(
+                self.momento_base
+                - timedelta(hours=1)
+            ),
+            nombre_archivo="reciente.pdf",
+        )
+
+        response = self.client.get(
+            self.url_listado
+        )
+
+        ids = [
+            item["id"]
+            for item in response.data["solicitudes"]
+        ]
+
+        self.assertEqual(
+            ids,
+            [
+                solicitud_reciente.id,
+                self.solicitud.id,
+            ],
+        )
+
+    def test_responsable_aprueba_solicitud(
+        self,
+    ):
+        response = self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA,
+            "El comprobante es válido.",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertTrue(
+            response.data["decision_guardada"]
+        )
+
+        self.assertEqual(
+            response.data["solicitud"]["estado"],
+            (
+                DebtResolutionRequest
+                .ESTADO_APROBADA
+            ),
+        )
+
+        self.assertEqual(
+            response.data["solicitud"]["decision"],
+            (
+                DebtResolutionRequest
+                .DECISION_APROBADA
+            ),
+        )
+
+        self.assertEqual(
+            response.data["deuda"]["estado"],
+            Debt.ESTADO_RESUELTA,
+        )
+
+    def test_responsable_rechaza_solicitud(
+        self,
+    ):
+        response = self.decidir(
+            DebtResolutionRequest.DECISION_RECHAZADA,
+            "El comprobante no corresponde.",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["solicitud"]["estado"],
+            (
+                DebtResolutionRequest
+                .ESTADO_RECHAZADA
+            ),
+        )
+
+        self.assertEqual(
+            response.data["deuda"]["estado"],
+            Debt.ESTADO_PENDIENTE,
+        )
+
+        self.assertEqual(
+            response.data["deuda"]["saldo_pendiente"],
+            "40.00",
+        )
+
+    def test_decision_exige_observacion(
+        self,
+    ):
+        for observacion in [
+            "",
+            "   ",
+        ]:
+            response = self.decidir(
+                DebtResolutionRequest.DECISION_APROBADA,
+                observacion,
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+            self.assertIn(
+                "observacion",
+                response.data,
+            )
+
+        self.solicitud.refresh_from_db()
+
+        self.assertTrue(
+            self.solicitud.pendiente_revision
+        )
+
+    def test_decision_invalida_es_rechazada(
+        self,
+    ):
+        response = self.decidir(
+            "pospuesta",
+            "Decisión inválida.",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertIn(
+            "decision",
+            response.data,
+        )
+
+    def test_decision_guarda_responsable_y_fecha_exacta(
+        self,
+    ):
+        momento = timezone.now()
+
+        with patch(
+            "expenses.models.timezone.now",
+            return_value=momento,
+        ):
+            response = self.decidir(
+                DebtResolutionRequest.DECISION_APROBADA,
+                "Pago confirmado.",
+            )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.solicitud.refresh_from_db()
+
+        self.assertEqual(
+            self.solicitud.revisado_por,
+            self.responsable,
+        )
+
+        self.assertEqual(
+            self.solicitud.revisado_por_username,
+            "responsable_final",
+        )
+
+        self.assertEqual(
+            self.solicitud.fecha_revision,
+            momento,
+        )
+
+        self.assertEqual(
+            self.solicitud.observacion_revision,
+            "Pago confirmado.",
+        )
+
+    def test_solicitud_revisada_no_puede_decidirse_nuevamente(
+        self,
+    ):
+        primera = self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA,
+            "Primera decisión.",
+        )
+
+        segunda = self.decidir(
+            DebtResolutionRequest.DECISION_RECHAZADA,
+            "Segundo intento.",
+        )
+
+        self.assertEqual(
+            primera.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            segunda.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.solicitud.refresh_from_db()
+
+        self.assertEqual(
+            self.solicitud.decision,
+            DebtResolutionRequest.DECISION_APROBADA,
+        )
+
+        self.assertEqual(
+            self.solicitud.observacion_revision,
+            "Primera decisión.",
+        )
+
+    def test_actividad_cerrada_permite_revisar(
+        self,
+    ):
+        self.assertEqual(
+            self.grupo.estado,
+            Group.ESTADO_CERRADA,
+        )
+
+        response = self.decidir(
+            DebtResolutionRequest.DECISION_RECHAZADA,
+            "Revisión posterior al cierre.",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+    def test_fallo_del_historial_revierte_decision_y_deuda(
+        self,
+    ):
+        with patch(
+            "expenses.models.ActivityHistory.registrar",
+            side_effect=RuntimeError(
+                "Fallo simulado del historial"
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.decidir(
+                    DebtResolutionRequest.DECISION_APROBADA,
+                    "Debe revertirse.",
+                )
+
+        self.solicitud.refresh_from_db()
+        self.deuda.refresh_from_db()
+        self.deuda.saldo_cierre.refresh_from_db()
+
+        self.assertTrue(
+            self.solicitud.pendiente_revision
+        )
+
+        self.assertIsNone(
+            self.solicitud.decision
+        )
+
+        self.assertEqual(
+            self.deuda.estado,
+            Debt.ESTADO_PENDIENTE,
+        )
+
+        self.assertEqual(
+            self.deuda.saldo_pendiente,
+            Decimal("40.00"),
+        )
+
+        self.assertEqual(
+            self.deuda.saldo_cierre.estado,
+            ClosingBalance.ESTADO_PENDIENTE,
+        )
+
+        self.assertFalse(
+            Notification.objects.exists()
+        )
+
+    def test_revision_se_registra_en_historial(
+        self,
+    ):
+        response = self.decidir(
+            DebtResolutionRequest.DECISION_RECHAZADA,
+            "No coincide con el registro.",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        evento = ActivityHistory.objects.get(
+            grupo=self.grupo,
+            tipo_accion=(
+                ActivityHistory
+                .TIPO_SOLICITUD_RESOLUCION_RECHAZADA
+            ),
+        )
+
+        self.assertEqual(
+            evento.usuario,
+            self.responsable,
+        )
+
+        self.assertEqual(
+            evento.datos["solicitud_id"],
+            self.solicitud.id,
+        )
+
+        self.assertEqual(
+            evento.datos["deuda_id"],
+            self.deuda.id,
+        )
+
+        self.assertEqual(
+            evento.datos["decision"],
+            "rechazada",
+        )
+
+        self.assertEqual(
+            evento.datos["observacion"],
+            "No coincide con el registro.",
+        )
+
+
+class ActualizarAdvertenciasResolucionSC66Test(
+    ResolucionDeudaFinalBaseMixin,
+    APITestCase,
+):
+    def test_aprobacion_actualiza_deuda_inmediatamente(
+        self,
+    ):
+        response = self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA,
+            "Pago aceptado.",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.deuda.refresh_from_db()
+
+        self.assertEqual(
+            self.deuda.estado,
+            Debt.ESTADO_RESUELTA,
+        )
+
+        self.assertEqual(
+            self.deuda.saldo_pendiente,
+            Decimal("0.00"),
+        )
+
+        self.assertIsNotNone(
+            self.deuda.fecha_resolucion
+        )
+
+    def test_aprobacion_actualiza_saldo_de_cierre(
+        self,
+    ):
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        saldo = ClosingBalance.objects.get(
+            id=self.deuda.saldo_cierre_id
+        )
+
+        self.assertEqual(
+            saldo.estado,
+            ClosingBalance.ESTADO_SALDADO,
+        )
+
+        self.assertEqual(
+            saldo.saldo_pendiente,
+            Decimal("0.00"),
+        )
+
+    def test_deuda_resuelta_deja_de_contabilizarse(
+        self,
+    ):
+        resumen_antes = (
+            Debt.resumen_deudas_activas_usuario(
+                self.solicitante
+            )
+        )
+
+        self.assertEqual(
+            resumen_antes[
+                "cantidad_deudas_pendientes"
+            ],
+            1,
+        )
+
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        resumen_despues = (
+            Debt.resumen_deudas_activas_usuario(
+                self.solicitante
+            )
+        )
+
+        self.assertEqual(
+            resumen_despues[
+                "cantidad_deudas_pendientes"
+            ],
+            0,
+        )
+
+        self.assertEqual(
+            resumen_despues[
+                "monto_total_pendiente"
+            ],
+            Decimal("0.00"),
+        )
+
+    def test_usuario_sin_otras_deudas_deja_de_mostrar_advertencia(
+        self,
+    ):
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        advertencia = (
+            self.grupo
+            .obtener_advertencia_deudas_usuario(
+                self.solicitante
+            )
+        )
+
+        self.assertFalse(
+            advertencia["tiene_deudas_pendientes"]
+        )
+
+        self.assertFalse(
+            advertencia["requiere_confirmacion"]
+        )
+
+        self.assertEqual(
+            advertencia[
+                "cantidad_deudas_pendientes"
+            ],
+            0,
+        )
+
+        self.assertEqual(
+            advertencia[
+                "monto_total_pendiente"
+            ],
+            "0.00",
+        )
+
+    def test_otras_deudas_conservan_advertencia_actualizada(
+        self,
+    ):
+        deuda_adicional = (
+            self.crear_deuda_en_otro_grupo(
+                usuario=self.solicitante,
+                monto=Decimal("15.50"),
+            )
+        )
+
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        advertencia = (
+            self.grupo
+            .obtener_advertencia_deudas_usuario(
+                self.solicitante
+            )
+        )
+
+        self.assertTrue(
+            advertencia["tiene_deudas_pendientes"]
+        )
+
+        self.assertEqual(
+            advertencia[
+                "cantidad_deudas_pendientes"
+            ],
+            1,
+        )
+
+        self.assertEqual(
+            advertencia[
+                "monto_total_pendiente"
+            ],
+            "15.50",
+        )
+
+        deuda_adicional.refresh_from_db()
+
+        self.assertEqual(
+            deuda_adicional.saldo_pendiente,
+            Decimal("15.50"),
+        )
+
+    def test_rechazo_no_elimina_advertencia(
+        self,
+    ):
+        response = self.decidir(
+            DebtResolutionRequest.DECISION_RECHAZADA
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        advertencia = (
+            self.grupo
+            .obtener_advertencia_deudas_usuario(
+                self.solicitante
+            )
+        )
+
+        self.assertTrue(
+            advertencia["tiene_deudas_pendientes"]
+        )
+
+        self.assertEqual(
+            advertencia[
+                "monto_total_pendiente"
+            ],
+            "40.00",
+        )
+
+    def test_solicitud_pendiente_no_elimina_advertencia(
+        self,
+    ):
+        advertencia = (
+            self.grupo
+            .obtener_advertencia_deudas_usuario(
+                self.solicitante
+            )
+        )
+
+        self.assertTrue(
+            self.solicitud.pendiente_revision
+        )
+
+        self.assertTrue(
+            advertencia["tiene_deudas_pendientes"]
+        )
+
+        self.assertEqual(
+            advertencia[
+                "cantidad_deudas_pendientes"
+            ],
+            1,
+        )
+
+    def test_actualizacion_se_realiza_una_sola_vez(
+        self,
+    ):
+        primera = self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        self.deuda.refresh_from_db()
+        fecha_resolucion = self.deuda.fecha_resolucion
+
+        segunda = self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA,
+            "Intento repetido.",
+        )
+
+        self.deuda.refresh_from_db()
+
+        self.assertEqual(
+            primera.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            segunda.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            self.deuda.fecha_resolucion,
+            fecha_resolucion,
+        )
+
+        self.assertEqual(
+            Notification.objects.filter(
+                usuario=self.solicitante
+            ).count(),
+            1,
+        )
+
+    def test_repetir_consultas_no_modifica_valores(
+        self,
+    ):
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        self.deuda.refresh_from_db()
+
+        valores = (
+            self.deuda.estado,
+            self.deuda.saldo_pendiente,
+            self.deuda.fecha_resolucion,
+        )
+
+        for _ in range(3):
+            listado = self.client.get(
+                self.url_listado
+            )
+
+            detalle = self.client.get(
+                self.url_detalle
+            )
+
+            self.assertEqual(
+                listado.status_code,
+                status.HTTP_200_OK,
+            )
+
+            self.assertEqual(
+                detalle.status_code,
+                status.HTTP_200_OK,
+            )
+
+        self.deuda.refresh_from_db()
+
+        self.assertEqual(
+            (
+                self.deuda.estado,
+                self.deuda.saldo_pendiente,
+                self.deuda.fecha_resolucion,
+            ),
+            valores,
+        )
+
+    def test_saldos_de_otros_participantes_no_se_alteran(
+        self,
+    ):
+        valores_antes = (
+            self.deuda_otro.estado,
+            self.deuda_otro.saldo_pendiente,
+            self.deuda_otro.saldo_cierre.estado,
+            self.deuda_otro.saldo_cierre.saldo_pendiente,
+        )
+
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        self.deuda_otro.refresh_from_db()
+        self.deuda_otro.saldo_cierre.refresh_from_db()
+
+        self.assertEqual(
+            (
+                self.deuda_otro.estado,
+                self.deuda_otro.saldo_pendiente,
+                self.deuda_otro.saldo_cierre.estado,
+                self.deuda_otro.saldo_cierre.saldo_pendiente,
+            ),
+            valores_antes,
+        )
+
+    def test_historial_conserva_valores_antes_y_despues(
+        self,
+    ):
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA,
+            "Se confirma la resolución.",
+        )
+
+        evento = ActivityHistory.objects.get(
+            grupo=self.grupo,
+            tipo_accion=(
+                ActivityHistory
+                .TIPO_SOLICITUD_RESOLUCION_APROBADA
+            ),
+        )
+
+        self.assertEqual(
+            evento.datos[
+                "deuda_antes"
+            ]["estado"],
+            Debt.ESTADO_PENDIENTE,
+        )
+
+        self.assertEqual(
+            evento.datos[
+                "deuda_antes"
+            ]["saldo_pendiente"],
+            "40.00",
+        )
+
+        self.assertEqual(
+            evento.datos[
+                "deuda_despues"
+            ]["estado"],
+            Debt.ESTADO_RESUELTA,
+        )
+
+        self.assertEqual(
+            evento.datos[
+                "deuda_despues"
+            ]["saldo_pendiente"],
+            "0.00",
+        )
+
+        self.assertEqual(
+            evento.datos[
+                "advertencia_antes"
+            ]["cantidad_deudas_pendientes"],
+            1,
+        )
+
+        self.assertEqual(
+            evento.datos[
+                "advertencia_despues"
+            ]["cantidad_deudas_pendientes"],
+            0,
+        )
+
+    def test_solicitud_conserva_decision_final(
+        self,
+    ):
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA,
+            "Evidencia válida.",
+        )
+
+        response = self.client.get(
+            self.url_detalle
+        )
+
+        solicitud = response.data["solicitud"]
+
+        self.assertEqual(
+            solicitud["decision"],
+            "aprobada",
+        )
+
+        self.assertEqual(
+            solicitud["observacion_revision"],
+            "Evidencia válida.",
+        )
+
+        self.assertEqual(
+            solicitud["resultado_deuda"],
+            "La deuda fue resuelta.",
+        )
+
+        self.assertFalse(
+            solicitud["pendiente_revision"]
+        )
+
+    def test_fallo_al_actualizar_saldo_revierte_resolucion(
+        self,
+    ):
+        with patch(
+            "expenses.models.ClosingBalance.save",
+            side_effect=RuntimeError(
+                "Fallo simulado al actualizar saldo"
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.decidir(
+                    DebtResolutionRequest.DECISION_APROBADA
+                )
+
+        self.deuda.refresh_from_db()
+        self.solicitud.refresh_from_db()
+
+        saldo = ClosingBalance.objects.get(
+            id=self.deuda.saldo_cierre_id
+        )
+
+        self.assertEqual(
+            self.deuda.estado,
+            Debt.ESTADO_PENDIENTE,
+        )
+
+        self.assertEqual(
+            self.deuda.saldo_pendiente,
+            Decimal("40.00"),
+        )
+
+        self.assertTrue(
+            self.solicitud.pendiente_revision
+        )
+
+        self.assertEqual(
+            saldo.estado,
+            ClosingBalance.ESTADO_PENDIENTE,
+        )
+
+        self.assertEqual(
+            saldo.saldo_pendiente,
+            Decimal("40.00"),
+        )
+
+        self.assertFalse(
+            Notification.objects.exists()
+        )
+
+    def test_cantidad_y_monto_coinciden_con_deudas_vigentes(
+        self,
+    ):
+        self.crear_deuda_en_otro_grupo(
+            usuario=self.solicitante,
+            monto=Decimal("12.25"),
+            nombre="Segunda deuda vigente",
+        )
+
+        deuda_resuelta = (
+            self.crear_deuda_en_otro_grupo(
+                usuario=self.solicitante,
+                monto=Decimal("8.00"),
+                nombre="Deuda resuelta excluida",
+            )
+        )
+
+        deuda_resuelta.estado = Debt.ESTADO_RESUELTA
+        deuda_resuelta.saldo_pendiente = Decimal("0.00")
+        deuda_resuelta.fecha_resolucion = timezone.now()
+        deuda_resuelta.save()
+
+        advertencia = (
+            self.grupo
+            .obtener_advertencia_deudas_usuario(
+                self.solicitante
+            )
+        )
+
+        self.assertEqual(
+            advertencia[
+                "cantidad_deudas_pendientes"
+            ],
+            2,
+        )
+
+        self.assertEqual(
+            advertencia[
+                "monto_total_pendiente"
+            ],
+            "52.25",
+        )
+
+    def test_deuda_eliminada_no_aparece_en_advertencia(
+        self,
+    ):
+        deuda_eliminable = (
+            self.crear_deuda_en_otro_grupo(
+                usuario=self.solicitante,
+                monto=Decimal("9.00"),
+                nombre="Deuda que será eliminada",
+            )
+        )
+
+        deuda_eliminable.delete()
+
+        advertencia = (
+            self.grupo
+            .obtener_advertencia_deudas_usuario(
+                self.solicitante
+            )
+        )
+
+        self.assertEqual(
+            advertencia[
+                "cantidad_deudas_pendientes"
+            ],
+            1,
+        )
+
+        self.assertEqual(
+            advertencia[
+                "monto_total_pendiente"
+            ],
+            "40.00",
+        )
+
+
+class NotificarDecisionResolucionSC67Test(
+    ResolucionDeudaFinalBaseMixin,
+    APITestCase,
+):
+    def test_aprobacion_notifica_unicamente_al_solicitante(
+        self,
+    ):
+        response = self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA,
+            "Pago verificado.",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            Notification.objects.count(),
+            1,
+        )
+
+        notificacion = Notification.objects.get()
+
+        self.assertEqual(
+            notificacion.usuario,
+            self.solicitante,
+        )
+
+        self.assertFalse(
+            Notification.objects.filter(
+                usuario=self.responsable
+            ).exists()
+        )
+
+        self.assertFalse(
+            Notification.objects.filter(
+                usuario=self.creador
+            ).exists()
+        )
+
+        self.assertFalse(
+            Notification.objects.filter(
+                usuario=self.otro_participante
+            ).exists()
+        )
+
+        self.assertFalse(
+            Notification.objects.filter(
+                usuario=self.externo
+            ).exists()
+        )
+
+    def test_rechazo_genera_notificacion_para_solicitante(
+        self,
+    ):
+        response = self.decidir(
+            DebtResolutionRequest.DECISION_RECHAZADA,
+            "Evidencia insuficiente.",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        notificacion = Notification.objects.get(
+            usuario=self.solicitante
+        )
+
+        self.assertIn(
+            "rechazada",
+            notificacion.titulo.lower(),
+        )
+
+        self.assertIn(
+            "permanece pendiente",
+            notificacion.mensaje,
+        )
+
+    def test_notificacion_identifica_actividad_deuda_y_solicitud(
+        self,
+    ):
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA,
+            "Pago confirmado.",
+        )
+
+        notificacion = Notification.objects.get(
+            usuario=self.solicitante
+        )
+
+        self.assertIn(
+            self.grupo.nombre,
+            notificacion.mensaje,
+        )
+
+        self.assertIn(
+            f"Solicitud #{self.solicitud.id}",
+            notificacion.mensaje,
+        )
+
+        self.assertIn(
+            f"Deuda #{self.deuda.id}",
+            notificacion.mensaje,
+        )
+
+    def test_notificacion_incluye_decision_y_observacion(
+        self,
+    ):
+        observacion = (
+            "El documento presentado coincide "
+            "con el pago registrado."
+        )
+
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA,
+            observacion,
+        )
+
+        notificacion = Notification.objects.get(
+            usuario=self.solicitante
+        )
+
+        self.assertIn(
+            "aprobada",
+            notificacion.mensaje.lower(),
+        )
+
+        self.assertIn(
+            observacion,
+            notificacion.mensaje,
+        )
+
+        self.assertIn(
+            "La deuda fue resuelta",
+            notificacion.mensaje,
+        )
+
+    def test_notificacion_queda_inicialmente_no_leida(
+        self,
+    ):
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        notificacion = Notification.objects.get(
+            usuario=self.solicitante
+        )
+
+        self.assertFalse(
+            notificacion.leida
+        )
+
+        self.assertIsNone(
+            notificacion.fecha_lectura
+        )
+
+    def test_cada_decision_genera_una_sola_notificacion(
+        self,
+    ):
+        primera = self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        segunda = self.decidir(
+            DebtResolutionRequest.DECISION_RECHAZADA,
+            "Intento duplicado.",
+        )
+
+        self.assertEqual(
+            primera.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            segunda.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            Notification.objects.filter(
+                usuario=self.solicitante
+            ).count(),
+            1,
+        )
+
+    def test_notificacion_incluye_enlace_a_solicitud(
+        self,
+    ):
+        response = self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA
+        )
+
+        notificacion = Notification.objects.get(
+            usuario=self.solicitante
+        )
+
+        self.assertEqual(
+            notificacion.enlace,
+            (
+                f"/mis-deudas/{self.deuda.id}/"
+                f"solicitudes/{self.solicitud.id}"
+            ),
+        )
+
+        self.assertEqual(
+            response.data[
+                "notificacion"
+            ]["enlace"],
+            notificacion.enlace,
+        )
+
+    def test_notificacion_se_crea_despues_de_guardar_decision(
+        self,
+    ):
+        datos_observados = {}
+        crear_notificacion_original = (
+            Notification.objects.create
+        )
+
+        def comprobar_decision(*args, **kwargs):
+            solicitud = (
+                DebtResolutionRequest.objects.get(
+                    id=self.solicitud.id
+                )
+            )
+
+            deuda = Debt.objects.get(
+                id=self.deuda.id
+            )
+
+            datos_observados["estado_solicitud"] = (
+                solicitud.estado
+            )
+            datos_observados["estado_deuda"] = (
+                deuda.estado
+            )
+
+            return crear_notificacion_original(
+                *args,
+                **kwargs,
+            )
+
+        with patch(
+            "expenses.models.Notification.objects.create",
+            side_effect=comprobar_decision,
+        ):
+            response = self.decidir(
+                DebtResolutionRequest.DECISION_APROBADA
+            )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            datos_observados["estado_solicitud"],
+            (
+                DebtResolutionRequest
+                .ESTADO_APROBADA
+            ),
+        )
+
+        self.assertEqual(
+            datos_observados["estado_deuda"],
+            Debt.ESTADO_RESUELTA,
+        )
+
+    def test_fallo_de_notificacion_revierte_toda_la_decision(
+        self,
+    ):
+        with patch(
+            "expenses.models.Notification.objects.create",
+            side_effect=RuntimeError(
+                "Fallo simulado al crear notificación"
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.decidir(
+                    DebtResolutionRequest.DECISION_APROBADA,
+                    "Debe revertirse todo.",
+                )
+
+        self.solicitud.refresh_from_db()
+        self.deuda.refresh_from_db()
+
+        self.assertTrue(
+            self.solicitud.pendiente_revision
+        )
+
+        self.assertIsNone(
+            self.solicitud.decision
+        )
+
+        self.assertEqual(
+            self.deuda.estado,
+            Debt.ESTADO_PENDIENTE,
+        )
+
+        self.assertEqual(
+            self.deuda.saldo_pendiente,
+            Decimal("40.00"),
+        )
+
+        self.assertFalse(
+            ActivityHistory.objects.filter(
+                grupo=self.grupo,
+                tipo_accion__in=[
+                    ActivityHistory
+                    .TIPO_SOLICITUD_RESOLUCION_APROBADA,
+                    ActivityHistory
+                    .TIPO_SOLICITUD_RESOLUCION_RECHAZADA,
+                ],
+            ).exists()
+        )
+
+        self.assertFalse(
+            Notification.objects.exists()
+        )
+
+    def test_decision_invalida_no_crea_notificacion(
+        self,
+    ):
+        response = self.decidir(
+            "invalida",
+            "No debe guardarse.",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertFalse(
+            Notification.objects.exists()
+        )
+
+    def test_notificacion_conserva_contenido_historico(
+        self,
+    ):
+        observacion = "Observación histórica original."
+
+        self.decidir(
+            DebtResolutionRequest.DECISION_RECHAZADA,
+            observacion,
+        )
+
+        notificacion = Notification.objects.get(
+            usuario=self.solicitante
+        )
+
+        titulo_original = notificacion.titulo
+        mensaje_original = notificacion.mensaje
+        enlace_original = notificacion.enlace
+
+        self.grupo.nombre = "Actividad renombrada"
+        self.grupo.save(
+            update_fields=["nombre"]
+        )
+
+        self.solicitante.username = (
+            "solicitante_modificado"
+        )
+        self.solicitante.save(
+            update_fields=["username"]
+        )
+
+        self.solicitud.descripcion = (
+            "Descripción modificada posteriormente."
+        )
+        self.solicitud.save(
+            update_fields=["descripcion"]
+        )
+
+        notificacion.refresh_from_db()
+
+        self.assertEqual(
+            notificacion.titulo,
+            titulo_original,
+        )
+
+        self.assertEqual(
+            notificacion.mensaje,
+            mensaje_original,
+        )
+
+        self.assertEqual(
+            notificacion.enlace,
+            enlace_original,
+        )
+
+        self.assertIn(
+            observacion,
+            notificacion.mensaje,
+        )
+
+        self.assertIn(
+            "Actividad final de deudas",
+            notificacion.mensaje,
+        )
+
+    def test_solicitante_visualiza_notificacion_en_centro_personal(
+        self,
+    ):
+        self.decidir(
+            DebtResolutionRequest.DECISION_APROBADA,
+            "Pago aceptado.",
+        )
+
+        self.client.force_authenticate(
+            user=self.solicitante
+        )
+
+        response = self.client.get(
+            "/api/notificaciones/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["total_notificaciones"],
+            1,
+        )
+
+        self.assertEqual(
+            response.data["no_leidas"],
+            1,
+        )
+
+        notificacion = response.data[
+            "notificaciones"
+        ][0]
+
+        self.assertIn(
+            "aprobada",
+            notificacion["titulo"].lower(),
+        )
+
+        self.assertFalse(
+            notificacion["leida"]
+        )
+
+        self.assertEqual(
+            notificacion["estado"],
+            "no_leida",
+        )
+
+    def test_otros_usuarios_no_visualizan_notificacion(
+        self,
+    ):
+        self.decidir(
+            DebtResolutionRequest.DECISION_RECHAZADA
+        )
+
+        for usuario in [
+            self.creador,
+            self.responsable,
+            self.otro_participante,
+            self.externo,
+        ]:
+            self.client.force_authenticate(
+                user=usuario
+            )
+
+            response = self.client.get(
+                "/api/notificaciones/"
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_200_OK,
+            )
+
+            self.assertEqual(
+                response.data["total_notificaciones"],
+                0,
+            )
+
+            self.assertEqual(
+                response.data["notificaciones"],
+                [],
+            )

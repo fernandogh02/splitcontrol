@@ -1038,6 +1038,48 @@ class Group(models.Model):
             )
         )
 
+    def obtener_solicitudes_resolucion_para_revision(
+        self,
+        usuario,
+        solo_pendientes=True,
+    ):
+        if not self.puede_revisar_solicitudes_deuda(
+            usuario
+        ):
+            raise ValidationError(
+                (
+                    "Solo el responsable vigente puede "
+                    "consultar y revisar las solicitudes "
+                    "de resolución de deuda."
+                )
+            )
+
+        solicitudes = (
+            self.solicitudes_resolucion_deudas
+            .select_related(
+                "grupo",
+                "deuda",
+                "deuda__participante",
+                "deuda__saldo_cierre",
+                "solicitante",
+                "revisado_por",
+            )
+            .order_by(
+                "-fecha_envio",
+                "-id",
+            )
+        )
+
+        if solo_pendientes:
+            solicitudes = solicitudes.filter(
+                estado=(
+                    DebtResolutionRequest
+                    .ESTADO_PENDIENTE_REVISION
+                )
+            )
+
+        return solicitudes
+
     @property
     def mensaje_caso_todos_deben(self):
         if not self.caso_excepcional_todos_deben:
@@ -2574,6 +2616,432 @@ class DebtResolutionRequest(models.Model):
 
         return solicitud
 
+    @transaction.atomic
+    def revisar(
+        self,
+        responsable,
+        decision,
+        observacion,
+        momento=None,
+    ):
+        momento = momento or timezone.now()
+
+        if not self.pk:
+            raise ValidationError({
+                "solicitud": (
+                    "La solicitud debe existir antes "
+                    "de ser revisada."
+                )
+            })
+
+        if not responsable or not responsable.pk:
+            raise ValidationError({
+                "responsable": (
+                    "No se pudo identificar al usuario "
+                    "responsable de la revisión."
+                )
+            })
+
+        decision_normalizada = (
+            decision or ""
+        ).strip().lower()
+
+        if decision_normalizada not in {
+            self.DECISION_APROBADA,
+            self.DECISION_RECHAZADA,
+        }:
+            raise ValidationError({
+                "decision": (
+                    "La decisión debe ser aprobada "
+                    "o rechazada."
+                )
+            })
+
+        observacion_normalizada = (
+            observacion or ""
+        ).strip()
+
+        if not observacion_normalizada:
+            raise ValidationError({
+                "observacion": (
+                    "La observación o justificación "
+                    "de la decisión es obligatoria."
+                )
+            })
+
+        solicitud_bloqueada = (
+            DebtResolutionRequest.objects
+            .select_for_update()
+            .select_related(
+                "grupo",
+                "grupo__creador",
+                "deuda",
+                "deuda__participante",
+                "deuda__saldo_cierre",
+                "solicitante",
+            )
+            .get(pk=self.pk)
+        )
+
+        grupo = solicitud_bloqueada.grupo
+
+        if not grupo.puede_revisar_solicitudes_deuda(
+            responsable
+        ):
+            raise ValidationError({
+                "responsable": (
+                    "Solo el responsable vigente de la "
+                    "actividad puede tomar esta decisión."
+                )
+            })
+
+        if (
+            solicitud_bloqueada.estado
+            != self.ESTADO_PENDIENTE_REVISION
+        ):
+            raise ValidationError({
+                "solicitud": (
+                    "La solicitud ya fue revisada y no "
+                    "puede decidirse nuevamente."
+                )
+            })
+
+        deuda_bloqueada = (
+            Debt.objects
+            .select_for_update()
+            .select_related(
+                "grupo",
+                "participante",
+                "saldo_cierre",
+            )
+            .get(
+                pk=solicitud_bloqueada.deuda_id
+            )
+        )
+
+        if (
+            deuda_bloqueada.grupo_id
+            != solicitud_bloqueada.grupo_id
+            or deuda_bloqueada.participante_id
+            != solicitud_bloqueada.solicitante_id
+        ):
+            raise ValidationError({
+                "solicitud": (
+                    "La solicitud no coincide con la "
+                    "deuda o el usuario solicitante."
+                )
+            })
+
+        if (
+            deuda_bloqueada.estado
+            == Debt.ESTADO_RESUELTA
+            or deuda_bloqueada.saldo_pendiente
+            <= Decimal("0.00")
+        ):
+            raise ValidationError({
+                "deuda": (
+                    "La deuda ya se encuentra resuelta "
+                    "y no admite otra decisión."
+                )
+            })
+
+        resumen_antes = (
+            Debt.resumen_deudas_activas_usuario(
+                solicitud_bloqueada.solicitante
+            )
+        )
+
+        deuda_antes = {
+            "estado": deuda_bloqueada.estado,
+            "monto_original": (
+                f"{deuda_bloqueada.monto_original:.2f}"
+            ),
+            "saldo_pendiente": (
+                f"{deuda_bloqueada.saldo_pendiente:.2f}"
+            ),
+            "fecha_resolucion": (
+                deuda_bloqueada
+                .fecha_resolucion
+                .isoformat()
+                if deuda_bloqueada.fecha_resolucion
+                else None
+            ),
+        }
+
+        saldo_bloqueado = (
+            ClosingBalance.objects
+            .select_for_update()
+            .get(
+                pk=deuda_bloqueada.saldo_cierre_id
+            )
+        )
+
+        saldo_antes = {
+            "estado": saldo_bloqueado.estado,
+            "saldo_pendiente": (
+                f"{saldo_bloqueado.saldo_pendiente:.2f}"
+            ),
+            "total_pagado": (
+                f"{saldo_bloqueado.total_pagado:.2f}"
+            ),
+        }
+
+        if (
+            decision_normalizada
+            == self.DECISION_APROBADA
+        ):
+            estado_solicitud = self.ESTADO_APROBADA
+
+            deuda_bloqueada.estado = (
+                Debt.ESTADO_RESUELTA
+            )
+            deuda_bloqueada.saldo_pendiente = (
+                Decimal("0.00")
+            )
+            deuda_bloqueada.fecha_resolucion = momento
+
+            deuda_bloqueada.save(
+                update_fields=[
+                    "estado",
+                    "saldo_pendiente",
+                    "fecha_resolucion",
+                    "fecha_actualizacion",
+                ]
+            )
+
+            saldo_bloqueado.estado = (
+                ClosingBalance.ESTADO_SALDADO
+            )
+            saldo_bloqueado.saldo_pendiente = (
+                Decimal("0.00")
+            )
+
+            saldo_bloqueado.save(
+                update_fields=[
+                    "estado",
+                    "saldo_pendiente",
+                ]
+            )
+
+            resultado_deuda = (
+                "La deuda fue resuelta."
+            )
+        else:
+            estado_solicitud = self.ESTADO_RECHAZADA
+
+            deuda_bloqueada.estado = (
+                Debt.ESTADO_PENDIENTE
+            )
+            deuda_bloqueada.fecha_resolucion = None
+
+            deuda_bloqueada.save(
+                update_fields=[
+                    "estado",
+                    "fecha_resolucion",
+                    "fecha_actualizacion",
+                ]
+            )
+
+            resultado_deuda = (
+                "La deuda permanece pendiente."
+            )
+
+        solicitud_bloqueada.estado = (
+            estado_solicitud
+        )
+        solicitud_bloqueada.decision = (
+            decision_normalizada
+        )
+        solicitud_bloqueada.observacion_revision = (
+            observacion_normalizada
+        )
+        solicitud_bloqueada.revisado_por = responsable
+        solicitud_bloqueada.revisado_por_username = (
+            responsable.username
+        )
+        solicitud_bloqueada.fecha_revision = momento
+
+        solicitud_bloqueada.save(
+            update_fields=[
+                "estado",
+                "decision",
+                "observacion_revision",
+                "revisado_por",
+                "revisado_por_username",
+                "fecha_revision",
+                "fecha_actualizacion",
+            ]
+        )
+
+        resumen_despues = (
+            Debt.resumen_deudas_activas_usuario(
+                solicitud_bloqueada.solicitante
+            )
+        )
+
+        tipo_historial = (
+            ActivityHistory
+            .TIPO_SOLICITUD_RESOLUCION_APROBADA
+            if decision_normalizada
+            == self.DECISION_APROBADA
+            else (
+                ActivityHistory
+                .TIPO_SOLICITUD_RESOLUCION_RECHAZADA
+            )
+        )
+
+        ActivityHistory.registrar(
+            grupo=grupo,
+            usuario=responsable,
+            tipo_accion=tipo_historial,
+            descripcion=(
+                f"{responsable.username} "
+                f"{decision_normalizada} la solicitud "
+                f"de resolución de "
+                f"{solicitud_bloqueada.solicitante_username} "
+                f'en la actividad '
+                f'"{solicitud_bloqueada.grupo_nombre}".'
+            ),
+            datos={
+                "solicitud_id": (
+                    solicitud_bloqueada.id
+                ),
+                "deuda_id": deuda_bloqueada.id,
+                "grupo_id": grupo.id,
+                "grupo_nombre": (
+                    solicitud_bloqueada.grupo_nombre
+                ),
+                "solicitante_id": (
+                    solicitud_bloqueada.solicitante_id
+                ),
+                "solicitante_username": (
+                    solicitud_bloqueada
+                    .solicitante_username
+                ),
+                "responsable_id": responsable.id,
+                "responsable_username": (
+                    responsable.username
+                ),
+                "decision": decision_normalizada,
+                "observacion": (
+                    observacion_normalizada
+                ),
+                "fecha_revision": (
+                    momento.isoformat()
+                ),
+                "deuda_antes": deuda_antes,
+                "deuda_despues": {
+                    "estado": (
+                        deuda_bloqueada.estado
+                    ),
+                    "monto_original": (
+                        f"{deuda_bloqueada.monto_original:.2f}"
+                    ),
+                    "saldo_pendiente": (
+                        f"{deuda_bloqueada.saldo_pendiente:.2f}"
+                    ),
+                    "fecha_resolucion": (
+                        deuda_bloqueada
+                        .fecha_resolucion
+                        .isoformat()
+                        if deuda_bloqueada
+                        .fecha_resolucion
+                        else None
+                    ),
+                },
+                "saldo_cierre_antes": saldo_antes,
+                "saldo_cierre_despues": {
+                    "estado": (
+                        saldo_bloqueado.estado
+                    ),
+                    "saldo_pendiente": (
+                        f"{saldo_bloqueado.saldo_pendiente:.2f}"
+                    ),
+                    "total_pagado": (
+                        f"{saldo_bloqueado.total_pagado:.2f}"
+                    ),
+                },
+                "advertencia_antes": {
+                    "cantidad_deudas_pendientes": (
+                        resumen_antes[
+                            "cantidad_deudas_pendientes"
+                        ]
+                    ),
+                    "monto_total_pendiente": (
+                        f'{resumen_antes[
+                            "monto_total_pendiente"
+                        ]:.2f}'
+                    ),
+                },
+                "advertencia_despues": {
+                    "cantidad_deudas_pendientes": (
+                        resumen_despues[
+                            "cantidad_deudas_pendientes"
+                        ]
+                    ),
+                    "monto_total_pendiente": (
+                        f'{resumen_despues[
+                            "monto_total_pendiente"
+                        ]:.2f}'
+                    ),
+                },
+            },
+        )
+
+        decision_texto = (
+            "aprobada"
+            if decision_normalizada
+            == self.DECISION_APROBADA
+            else "rechazada"
+        )
+
+        titulo_notificacion = (
+            "Solicitud de deuda "
+            f"{decision_texto}"
+        )
+
+        mensaje_notificacion = (
+            f'Solicitud #{solicitud_bloqueada.id} '
+            f'de la actividad '
+            f'"{solicitud_bloqueada.grupo_nombre}" '
+            f'fue {decision_texto}. '
+            f'Deuda #{deuda_bloqueada.id}: '
+            f'{resultado_deuda} '
+            f'Observación: '
+            f'{observacion_normalizada}'
+        )
+
+        notificacion = Notification.objects.create(
+            usuario=(
+                solicitud_bloqueada.solicitante
+            ),
+            titulo=titulo_notificacion,
+            mensaje=mensaje_notificacion,
+            enlace=(
+                f"/mis-deudas/{deuda_bloqueada.id}/"
+                f"solicitudes/"
+                f"{solicitud_bloqueada.id}"
+            ),
+        )
+
+        self.estado = solicitud_bloqueada.estado
+        self.decision = solicitud_bloqueada.decision
+        self.observacion_revision = (
+            solicitud_bloqueada
+            .observacion_revision
+        )
+        self.revisado_por = responsable
+        self.revisado_por_username = (
+            responsable.username
+        )
+        self.fecha_revision = momento
+
+        return (
+            solicitud_bloqueada,
+            deuda_bloqueada,
+            notificacion,
+        )
+
 
 class Notification(models.Model):
     usuario = models.ForeignKey(
@@ -2695,6 +3163,12 @@ class ActivityHistory(models.Model):
     TIPO_SOLICITUD_RESOLUCION_CREADA = (
         "solicitud_resolucion_creada"
     )
+    TIPO_SOLICITUD_RESOLUCION_APROBADA = (
+        "solicitud_resolucion_aprobada"
+    )
+    TIPO_SOLICITUD_RESOLUCION_RECHAZADA = (
+        "solicitud_resolucion_rechazada"
+    )
 
     TIPOS_ACCION = [
         (
@@ -2752,6 +3226,14 @@ class ActivityHistory(models.Model):
         (
             TIPO_SOLICITUD_RESOLUCION_CREADA,
             "Solicitud de resolución creada",
+        ),
+        (
+            TIPO_SOLICITUD_RESOLUCION_APROBADA,
+            "Solicitud de resolución aprobada",
+        ),
+        (
+            TIPO_SOLICITUD_RESOLUCION_RECHAZADA,
+            "Solicitud de resolución rechazada",
         ),
     ]
 
