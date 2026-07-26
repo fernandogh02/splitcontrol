@@ -4805,3 +4805,338 @@ class CentroNotificacionesSC54Test(APITestCase):
                 status.HTTP_401_UNAUTHORIZED,
             )
 
+
+class NotificarRegistroGastoSC55Test(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc55",
+            email="fernando_sc55@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc55",
+            email="carlita_sc55@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc55",
+            email="damarys_sc55@example.com",
+            password="Prueba123",
+        )
+
+        self.retirado = User.objects.create_user(
+            username="retirado_sc55",
+            email="retirado_sc55@example.com",
+            password="Prueba123",
+        )
+
+        self.externo = User.objects.create_user(
+            username="externo_sc55",
+            email="externo_sc55@example.com",
+            password="Prueba123",
+        )
+
+        ahora = timezone.now()
+
+        self.grupo = Group.objects.create(
+            nombre="Viaje SC-55",
+            descripcion="Actividad para probar notificaciones",
+            creador=self.fernando,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
+        )
+
+        self.grupo.participantes.add(
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        )
+
+        for usuario in [
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        ]:
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=usuario,
+            )
+
+        membresia_retirada = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.retirado,
+        )
+        membresia_retirada.retirar()
+
+        self.url = (
+            f"/api/grupos/{self.grupo.id}/gastos/"
+        )
+
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+    def registrar_gasto(
+        self,
+        descripcion="Transporte al aeropuerto",
+        monto="45.75",
+    ):
+        return self.client.post(
+            self.url,
+            {
+                "descripcion": descripcion,
+                "monto": monto,
+                "fecha_gasto": "2026-07-26",
+            },
+            format="json",
+        )
+
+    def test_registro_correcto_notifica_a_otros_miembros_activos(
+        self,
+    ):
+        response = self.registrar_gasto()
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        self.assertEqual(
+            response.data["notificaciones_generadas"],
+            2,
+        )
+
+        destinatarios = set(
+            Notification.objects.values_list(
+                "usuario__username",
+                flat=True,
+            )
+        )
+
+        self.assertSetEqual(
+            destinatarios,
+            {
+                "fernando_sc55",
+                "damarys_sc55",
+            },
+        )
+
+    def test_usuario_que_registra_no_recibe_notificacion_propia(
+        self,
+    ):
+        self.registrar_gasto()
+
+        self.assertFalse(
+            Notification.objects.filter(
+                usuario=self.carlita,
+            ).exists()
+        )
+
+        self.assertEqual(
+            Notification.objects.count(),
+            2,
+        )
+
+    def test_notificacion_identifica_actividad_gasto_monto_y_usuario(
+        self,
+    ):
+        response = self.registrar_gasto()
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        notificacion = Notification.objects.get(
+            usuario=self.fernando,
+        )
+
+        self.assertEqual(
+            notificacion.titulo,
+            "Nuevo gasto en Viaje SC-55",
+        )
+
+        self.assertIn(
+            "carlita_sc55",
+            notificacion.mensaje,
+        )
+
+        self.assertIn(
+            "Transporte al aeropuerto",
+            notificacion.mensaje,
+        )
+
+        self.assertIn(
+            "$45.75",
+            notificacion.mensaje,
+        )
+
+        self.assertEqual(
+            notificacion.enlace,
+            f"/grupos/{self.grupo.id}",
+        )
+
+    def test_notificaciones_quedan_inicialmente_no_leidas(
+        self,
+    ):
+        self.registrar_gasto()
+
+        notificaciones = Notification.objects.all()
+
+        self.assertEqual(
+            notificaciones.count(),
+            2,
+        )
+
+        for notificacion in notificaciones:
+            self.assertFalse(
+                notificacion.leida
+            )
+
+            self.assertIsNone(
+                notificacion.fecha_lectura
+            )
+
+    def test_retirados_y_externos_no_reciben_notificaciones(
+        self,
+    ):
+        self.registrar_gasto()
+
+        self.assertFalse(
+            Notification.objects.filter(
+                usuario=self.retirado,
+            ).exists()
+        )
+
+        self.assertFalse(
+            Notification.objects.filter(
+                usuario=self.externo,
+            ).exists()
+        )
+
+    def test_cada_destinatario_recibe_una_sola_notificacion_por_gasto(
+        self,
+    ):
+        response = self.registrar_gasto()
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
+
+        gasto = Expense.objects.get(
+            descripcion="Transporte al aeropuerto",
+        )
+
+        for usuario in [
+            self.fernando,
+            self.damarys,
+        ]:
+            self.assertEqual(
+                Notification.objects.filter(
+                    usuario=usuario,
+                    enlace=f"/grupos/{gasto.grupo_id}",
+                    mensaje__contains=(
+                        "Transporte al aeropuerto"
+                    ),
+                ).count(),
+                1,
+            )
+
+    def test_registro_invalido_no_crea_gasto_ni_notificaciones(
+        self,
+    ):
+        response = self.registrar_gasto(
+            descripcion="",
+            monto="0.00",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            Expense.objects.count(),
+            0,
+        )
+
+        self.assertEqual(
+            Notification.objects.count(),
+            0,
+        )
+
+    def test_error_al_crear_notificaciones_revierte_el_gasto(
+        self,
+    ):
+        with patch(
+            (
+                "expenses.views.Notification.objects."
+                "bulk_create"
+            ),
+            side_effect=RuntimeError(
+                "Fallo simulado al crear notificaciones"
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.registrar_gasto()
+
+        self.assertEqual(
+            Expense.objects.count(),
+            0,
+        )
+
+        self.assertEqual(
+            Notification.objects.count(),
+            0,
+        )
+
+    def test_destinatario_visualiza_notificacion_en_su_centro(
+        self,
+    ):
+        self.registrar_gasto()
+
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+        response = self.client.get(
+            "/api/notificaciones/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["total_notificaciones"],
+            1,
+        )
+
+        self.assertEqual(
+            response.data["no_leidas"],
+            1,
+        )
+
+        notificacion = response.data[
+            "notificaciones"
+        ][0]
+
+        self.assertEqual(
+            notificacion["titulo"],
+            "Nuevo gasto en Viaje SC-55",
+        )
+
+        self.assertEqual(
+            notificacion["enlace"],
+            f"/grupos/{self.grupo.id}",
+        )
+
+        self.assertFalse(
+            notificacion["leida"]
+        )
+
