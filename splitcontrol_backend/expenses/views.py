@@ -1494,8 +1494,26 @@ class GroupClosingBalanceView(APIView):
                 "fecha_generacion_saldos": (
                     grupo.fecha_generacion_saldos
                 ),
+                "caso_excepcional_todos_deben": (
+                    resumen["caso_todos_deben"]
+                ),
+                "fecha_deteccion_todos_deben": (
+                    resumen[
+                        "fecha_deteccion_todos_deben"
+                    ]
+                ),
                 "mensaje": resumen["mensaje"],
+                "puede_revisar_solicitudes": (
+                    grupo.puede_revisar_solicitudes_deuda(
+                        request.user
+                    )
+                ),
                 "resumen": {
+                    "total_participantes_con_obligacion": (
+                        resumen[
+                            "total_participantes_con_obligacion"
+                        ]
+                    ),
                     "total_saldos": (
                         resumen["total_saldos"]
                     ),
@@ -1514,13 +1532,234 @@ class GroupClosingBalanceView(APIView):
                         resumen["total_pendiente"]
                     ),
                 },
+                "deuda_propia": (
+                    DebtSerializer(
+                        grupo.obtener_deuda_propia(
+                            request.user
+                        ),
+                        context={
+                            "request": request,
+                        },
+                    ).data
+                    if grupo.obtener_deuda_propia(
+                        request.user
+                    )
+                    else None
+                ),
                 "saldos": ClosingBalanceSerializer(
                     saldos,
                     many=True,
+                    context={
+                        "request": request,
+                    },
                 ).data,
                 "deudas": DebtSerializer(
                     deudas,
                     many=True,
+                    context={
+                        "request": request,
+                    },
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class GroupOwnDebtView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar tu deuda."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not grupo_esta_cerrado(grupo):
+            return Response(
+                {
+                    "error": (
+                        "La deuda definitiva solo puede "
+                        "consultarse después del cierre "
+                        "de la actividad."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not grupo.fecha_generacion_saldos:
+            return Response(
+                {
+                    "error": (
+                        "El cierre automático todavía no ha "
+                        "generado las deudas de la actividad."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        deuda = grupo.obtener_deuda_propia(
+            request.user
+        )
+
+        if deuda:
+            mensaje = (
+                "Tu deuda pendiente fue consultada "
+                "correctamente."
+            )
+        else:
+            mensaje = (
+                "No tienes una deuda pendiente en "
+                "esta actividad."
+            )
+
+        resumen = (
+            grupo.obtener_resumen_saldos_cierre()
+        )
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "estado_actividad": grupo.estado,
+                "caso_excepcional_todos_deben": (
+                    resumen["caso_todos_deben"]
+                ),
+                "fecha_deteccion_todos_deben": (
+                    resumen[
+                        "fecha_deteccion_todos_deben"
+                    ]
+                ),
+                "mensaje": mensaje,
+                "deuda": (
+                    DebtSerializer(
+                        deuda,
+                        context={
+                            "request": request,
+                        },
+                    ).data
+                    if deuda
+                    else None
+                ),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class GroupDebtReviewView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para revisar sus deudas."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not grupo_esta_cerrado(grupo):
+            return Response(
+                {
+                    "error": (
+                        "Las deudas definitivas solo pueden "
+                        "revisarse después del cierre "
+                        "de la actividad."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not grupo.fecha_generacion_saldos:
+            return Response(
+                {
+                    "error": (
+                        "El cierre automático todavía no ha "
+                        "generado las deudas de la actividad."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            deudas = grupo.obtener_deudas_para_revision(
+                request.user
+            )
+        except ValidationError as error:
+            return Response(
+                {
+                    "error": error.messages[0]
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        resumen = (
+            grupo.obtener_resumen_saldos_cierre()
+        )
+
+        mensaje = (
+            "Todos los participantes con obligaciones "
+            "mantienen saldos pendientes."
+            if resumen["caso_todos_deben"]
+            else (
+                "Deudas disponibles para revisión "
+                "consultadas correctamente."
+            )
+        )
+
+        total_pendiente = sum(
+            (
+                deuda.saldo_pendiente
+                for deuda in deudas
+            ),
+            Decimal("0.00"),
+        )
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "estado_actividad": grupo.estado,
+                "caso_excepcional_todos_deben": (
+                    resumen["caso_todos_deben"]
+                ),
+                "fecha_deteccion_todos_deben": (
+                    resumen[
+                        "fecha_deteccion_todos_deben"
+                    ]
+                ),
+                "mensaje": mensaje,
+                "responsable": UserSimpleSerializer(
+                    request.user
+                ).data,
+                "total_deudas": deudas.count(),
+                "monto_total_pendiente": (
+                    f"{total_pendiente:.2f}"
+                ),
+                "deudas": DebtSerializer(
+                    deudas,
+                    many=True,
+                    context={
+                        "request": request,
+                    },
                 ).data,
             },
             status=status.HTTP_200_OK,
@@ -1647,6 +1886,73 @@ class GroupDebtView(APIView):
                     )
                 },
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if grupo.fecha_generacion_saldos:
+            deudas_persistentes = (
+                Debt.objects
+                .filter(grupo=grupo)
+                .select_related(
+                    "grupo",
+                    "participante",
+                    "saldo_cierre",
+                )
+                .order_by(
+                    "-fecha_generacion",
+                    "-id",
+                )
+            )
+
+            total_deudas = sum(
+                (
+                    deuda.saldo_pendiente
+                    for deuda in deudas_persistentes
+                ),
+                Decimal("0.00"),
+            )
+
+            resumen = (
+                grupo.obtener_resumen_saldos_cierre()
+            )
+
+            return Response(
+                {
+                    "grupo_id": grupo.id,
+                    "grupo_nombre": grupo.nombre,
+                    "estado_actividad": grupo.estado,
+                    "caso_excepcional_todos_deben": (
+                        resumen["caso_todos_deben"]
+                    ),
+                    "mensaje": resumen["mensaje"],
+                    "total_deudas": (
+                        deudas_persistentes.count()
+                    ),
+                    "monto_total_pendiente": (
+                        f"{total_deudas:.2f}"
+                    ),
+                    "deuda_propia": (
+                        DebtSerializer(
+                            grupo.obtener_deuda_propia(
+                                request.user
+                            ),
+                            context={
+                                "request": request,
+                            },
+                        ).data
+                        if grupo.obtener_deuda_propia(
+                            request.user
+                        )
+                        else None
+                    ),
+                    "deudas": DebtSerializer(
+                        deudas_persistentes,
+                        many=True,
+                        context={
+                            "request": request,
+                        },
+                    ).data,
+                },
+                status=status.HTTP_200_OK,
             )
 
         deudas_calculadas = calcular_deudas_grupo(grupo)
