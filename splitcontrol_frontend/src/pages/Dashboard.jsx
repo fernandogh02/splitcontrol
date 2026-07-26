@@ -3,6 +3,12 @@ import { useNavigate } from "react-router-dom";
 import logo from "../assets/splitcontrol-logo.png";
 import "../Notifications.css";
 
+const formatearMonto = (monto) =>
+  new Intl.NumberFormat("es-EC", {
+    style: "currency",
+    currency: "USD",
+  }).format(Number(monto) || 0);
+
 const obtenerConfiguracionEstado = (estado) => {
   if (estado === "programada") {
     return {
@@ -39,11 +45,40 @@ function Dashboard() {
   const [errorGrupos, setErrorGrupos] = useState("");
   const [notificacionesNoLeidas, setNotificacionesNoLeidas] =
     useState(0);
+  const [resumenDeudas, setResumenDeudas] = useState({
+    total_deudas: 0,
+    monto_total_pendiente: "0.00",
+    deudas: [],
+  });
+  const [cargandoResumenDeudas, setCargandoResumenDeudas] =
+    useState(true);
+  const [errorResumenDeudas, setErrorResumenDeudas] =
+    useState("");
+  const [
+    solicitudesPendientesRevision,
+    setSolicitudesPendientesRevision,
+  ] = useState(0);
+  const [
+    cargandoSolicitudesRevision,
+    setCargandoSolicitudesRevision,
+  ] = useState(true);
+  const [
+    errorSolicitudesRevision,
+    setErrorSolicitudesRevision,
+  ] = useState("");
 
   const username = localStorage.getItem("username") || "usuario";
   const displayName =
     username.charAt(0).toUpperCase() + username.slice(1);
   const avatarLetter = username.charAt(0).toUpperCase();
+
+  const gruposResponsableDeudas = grupos.filter(
+    (grupo) =>
+      grupo.responsable_deudas?.username === username
+  );
+
+  const primerGrupoResponsable =
+    gruposResponsableDeudas[0] || null;
 
   useEffect(() => {
     const obtenerGrupos = async () => {
@@ -103,6 +138,164 @@ function Dashboard() {
 
     obtenerGrupos();
   }, []);
+
+  useEffect(() => {
+    const obtenerResumenDeudas = async () => {
+      const token = localStorage.getItem("access");
+
+      if (!token) {
+        setErrorResumenDeudas(
+          "Tu sesión ha expirado. Inicia sesión nuevamente."
+        );
+        setCargandoResumenDeudas(false);
+        return;
+      }
+
+      try {
+        setCargandoResumenDeudas(true);
+        setErrorResumenDeudas("");
+
+        const response = await fetch(
+          "http://127.0.0.1:8000/api/mis-deudas/",
+          {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          }
+        );
+
+        let data = {};
+
+        try {
+          data = await response.json();
+        } catch {
+          data = {};
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            data.error ||
+              data.detail ||
+              "No se pudo consultar el resumen de tus deudas."
+          );
+        }
+
+        setResumenDeudas({
+          total_deudas: Number(data.total_deudas) || 0,
+          monto_total_pendiente:
+            data.monto_total_pendiente || "0.00",
+          deudas: Array.isArray(data.deudas)
+            ? data.deudas
+            : [],
+        });
+      } catch (errorDeudas) {
+        setResumenDeudas({
+          total_deudas: 0,
+          monto_total_pendiente: "0.00",
+          deudas: [],
+        });
+        setErrorResumenDeudas(
+          errorDeudas.message ||
+            "No se pudo consultar el resumen de tus deudas."
+        );
+      } finally {
+        setCargandoResumenDeudas(false);
+      }
+    };
+
+    obtenerResumenDeudas();
+  }, []);
+
+  useEffect(() => {
+    let efectoCancelado = false;
+
+    const obtenerSolicitudesPendientes = async () => {
+      const token = localStorage.getItem("access");
+
+      if (!token) {
+        if (!efectoCancelado) {
+          setSolicitudesPendientesRevision(0);
+          setCargandoSolicitudesRevision(false);
+        }
+        return;
+      }
+
+      const gruposAsignados = grupos.filter(
+        (grupo) =>
+          grupo.responsable_deudas?.username === username
+      );
+
+      if (gruposAsignados.length === 0) {
+        if (!efectoCancelado) {
+          setSolicitudesPendientesRevision(0);
+          setErrorSolicitudesRevision("");
+          setCargandoSolicitudesRevision(false);
+        }
+        return;
+      }
+
+      try {
+        setCargandoSolicitudesRevision(true);
+        setErrorSolicitudesRevision("");
+
+        const resultados = await Promise.all(
+          gruposAsignados.map(async (grupo) => {
+            const response = await fetch(
+              `http://127.0.0.1:8000/api/grupos/${grupo.id}/solicitudes-deuda/`,
+              {
+                method: "GET",
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                },
+              }
+            );
+
+            const data = await response
+              .json()
+              .catch(() => ({}));
+
+            if (!response.ok) {
+              throw new Error(
+                data.error ||
+                  data.detail ||
+                  `No se pudieron consultar las solicitudes de ${grupo.nombre}.`
+              );
+            }
+
+            return Number(data.total_pendientes) || 0;
+          })
+        );
+
+        if (!efectoCancelado) {
+          setSolicitudesPendientesRevision(
+            resultados.reduce(
+              (total, cantidad) => total + cantidad,
+              0
+            )
+          );
+        }
+      } catch (errorRevision) {
+        if (!efectoCancelado) {
+          setSolicitudesPendientesRevision(0);
+          setErrorSolicitudesRevision(
+            errorRevision.message ||
+              "No se pudieron consultar las solicitudes pendientes."
+          );
+        }
+      } finally {
+        if (!efectoCancelado) {
+          setCargandoSolicitudesRevision(false);
+        }
+      }
+    };
+
+    obtenerSolicitudesPendientes();
+
+    return () => {
+      efectoCancelado = true;
+    };
+  }, [grupos, username]);
 
   useEffect(() => {
     const obtenerContadorNotificaciones = async () => {
@@ -188,6 +381,13 @@ function Dashboard() {
 
             <button
               className="sidebar-link"
+              onClick={() => navigate("/mis-deudas")}
+            >
+              💳 Mis deudas
+            </button>
+
+            <button
+              className="sidebar-link"
               onClick={() => navigate("/notificaciones")}
             >
               🔔 Notificaciones
@@ -211,8 +411,12 @@ function Dashboard() {
         </div>
 
         <div className="sidebar-bottom">
-          <button className="btn btn-primary w-100 mb-3">
-            Registrar pago
+          <button
+            type="button"
+            className="btn btn-primary w-100 mb-3"
+            onClick={() => navigate("/mis-deudas")}
+          >
+            Consultar mis deudas
           </button>
 
           <div className="user-box">
@@ -277,29 +481,96 @@ function Dashboard() {
               ▣
             </div>
 
-            <div>
-              <span>Debes a otros</span>
-              <h2>€0.00</h2>
+            <div className="w-100">
+              <span>Mis obligaciones pendientes</span>
+
+              <h2>
+                {cargandoResumenDeudas
+                  ? "Consultando..."
+                  : formatearMonto(
+                      resumenDeudas.monto_total_pendiente
+                    )}
+              </h2>
+
               <p>
-                Sin deudas registradas por ahora
+                {cargandoResumenDeudas
+                  ? "Cargando tu información económica"
+                  : resumenDeudas.total_deudas > 0
+                    ? `${resumenDeudas.total_deudas} deuda${
+                        resumenDeudas.total_deudas === 1
+                          ? ""
+                          : "s"
+                      } registrada${
+                        resumenDeudas.total_deudas === 1
+                          ? ""
+                          : "s"
+                      }`
+                    : "No tienes deudas registradas"}
               </p>
+
+              <button
+                type="button"
+                className="btn btn-outline-danger btn-sm"
+                onClick={() => navigate("/mis-deudas")}
+              >
+                Ver mis deudas
+              </button>
             </div>
           </div>
 
           <div className="summary-card income">
             <div className="summary-icon green">
-              ▣
+              ✓
             </div>
 
-            <div>
-              <span>Te deben</span>
-              <h2>€0.00</h2>
+            <div className="w-100">
+              <span>Solicitudes por revisar</span>
+
+              <h2>
+                {cargandoSolicitudesRevision
+                  ? "Consultando..."
+                  : solicitudesPendientesRevision}
+              </h2>
+
               <p>
-                Sin cobros pendientes por ahora
+                {gruposResponsableDeudas.length > 0
+                  ? `Responsable en ${
+                      gruposResponsableDeudas.length
+                    } actividad${
+                      gruposResponsableDeudas.length === 1
+                        ? ""
+                        : "es"
+                    }`
+                  : "No tienes revisiones asignadas"}
               </p>
+
+              <button
+                type="button"
+                className="btn btn-outline-success btn-sm"
+                onClick={() =>
+                  primerGrupoResponsable &&
+                  navigate(
+                    `/grupos/${primerGrupoResponsable.id}/solicitudes-deuda`
+                  )
+                }
+                disabled={!primerGrupoResponsable}
+              >
+                Revisar solicitudes
+              </button>
             </div>
           </div>
         </section>
+
+        {(errorResumenDeudas ||
+          errorSolicitudesRevision) && (
+          <div
+            className="alert alert-warning mt-3"
+            role="alert"
+          >
+            {errorResumenDeudas ||
+              errorSolicitudesRevision}
+          </div>
+        )}
 
         <section className="quick-actions">
           <button
@@ -309,12 +580,31 @@ function Dashboard() {
             👥 Crear grupo
           </button>
 
-          <button className="btn btn-primary">
-            💳 Registrar gasto
+          <button
+            className="btn btn-primary"
+            onClick={() => navigate("/mis-deudas")}
+          >
+            💳 Mis deudas
           </button>
 
-          <button className="btn btn-success">
-            💵 Registrar pago
+          <button
+            className="btn btn-outline-primary"
+            onClick={() => navigate("/notificaciones")}
+          >
+            🔔 Notificaciones
+          </button>
+
+          <button
+            className="btn btn-success"
+            onClick={() =>
+              primerGrupoResponsable &&
+              navigate(
+                `/grupos/${primerGrupoResponsable.id}/solicitudes-deuda`
+              )
+            }
+            disabled={!primerGrupoResponsable}
+          >
+            ✓ Revisar solicitudes
           </button>
 
           <button
@@ -427,6 +717,13 @@ function Dashboard() {
                         >
                           {configuracionEstado.texto}
                         </span>
+
+                        {grupo.responsable_deudas?.username ===
+                          username && (
+                          <span className="badge bg-warning text-dark">
+                            Responsable de deudas
+                          </span>
+                        )}
                       </div>
 
                       <small>
@@ -460,8 +757,12 @@ function Dashboard() {
 
                     <div className="text-end">
                       <strong className="amount neutral">
-                        €0.00
+                        {formatearMonto(grupo.total_gastos)}
                       </strong>
+
+                      <small className="text-muted d-block">
+                        Total de gastos
+                      </small>
 
                       <small className="text-muted d-block mt-2">
                         Ver actividad →

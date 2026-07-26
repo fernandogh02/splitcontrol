@@ -5,6 +5,8 @@ import Dashboard from "./pages/Dashboard";
 import CreateGroup from "./pages/CreateGroup";
 import ExpenseSummary from "./pages/ExpenseSummary";
 import Notifications from "./pages/Notifications";
+import MyDebts from "./pages/MyDebts";
+import DebtResolutionReview from "./pages/DebtResolutionReview";
 import PrivateRoute from "./components/PrivateRoute";
 import GroupDetail from "./pages/GroupDetail";
 import "./App.css";
@@ -41,6 +43,33 @@ function App() {
           element={
             <PrivateRoute>
               <ExpenseSummary />
+            </PrivateRoute>
+          }
+        />
+
+        <Route
+          path="/mis-deudas"
+          element={
+            <PrivateRoute>
+              <MyDebts />
+            </PrivateRoute>
+          }
+        />
+
+        <Route
+          path="/mis-deudas/:deudaId/solicitudes/:solicitudId"
+          element={
+            <PrivateRoute>
+              <MyDebts />
+            </PrivateRoute>
+          }
+        />
+
+        <Route
+          path="/grupos/:id/solicitudes-deuda"
+          element={
+            <PrivateRoute>
+              <DebtResolutionReview />
             </PrivateRoute>
           }
         />

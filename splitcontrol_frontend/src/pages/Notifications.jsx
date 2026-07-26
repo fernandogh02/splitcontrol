@@ -17,6 +17,66 @@ const formatearFechaHora = (fecha) => {
   });
 };
 
+const obtenerConfiguracionNotificacion = (
+  notificacion
+) => {
+  const titulo = String(
+    notificacion?.titulo || ""
+  ).toLowerCase();
+
+  if (titulo.includes("solicitud de deuda aprobada")) {
+    return {
+      icono: "✓",
+      etiqueta: "Solicitud aprobada",
+      claseEtiqueta: "bg-success",
+      claseResultado: "alert-success",
+      textoResultado:
+        "La solicitud fue aprobada y la deuda relacionada quedó resuelta.",
+      textoBoton: "Ver deuda y solicitud",
+      esDecisionDeuda: true,
+      decision: "aprobada",
+    };
+  }
+
+  if (titulo.includes("solicitud de deuda rechazada")) {
+    return {
+      icono: "✕",
+      etiqueta: "Solicitud rechazada",
+      claseEtiqueta: "bg-danger",
+      claseResultado: "alert-danger",
+      textoResultado:
+        "La solicitud fue rechazada y la deuda relacionada continúa pendiente.",
+      textoBoton: "Ver deuda y solicitud",
+      esDecisionDeuda: true,
+      decision: "rechazada",
+    };
+  }
+
+  if (titulo.includes("nuevo gasto")) {
+    return {
+      icono: "💳",
+      etiqueta: "Nuevo gasto",
+      claseEtiqueta: "bg-primary",
+      claseResultado: "",
+      textoResultado: "",
+      textoBoton: "Ver actividad",
+      esDecisionDeuda: false,
+      decision: "",
+    };
+  }
+
+  return {
+    icono: notificacion?.leida ? "✓" : "🔔",
+    etiqueta: "Novedad",
+    claseEtiqueta: "bg-dark",
+    claseResultado: "",
+    textoResultado: "",
+    textoBoton: "Abrir recurso relacionado",
+    esDecisionDeuda: false,
+    decision: "",
+  };
+};
+
 function Notifications() {
   const navigate = useNavigate();
 
@@ -34,6 +94,18 @@ function Notifications() {
   const displayName =
     username.charAt(0).toUpperCase() + username.slice(1);
   const avatarLetter = username.charAt(0).toUpperCase();
+
+  const solicitudesAprobadas = notificaciones.filter(
+    (notificacion) =>
+      obtenerConfiguracionNotificacion(notificacion)
+        .decision === "aprobada"
+  ).length;
+
+  const solicitudesRechazadas = notificaciones.filter(
+    (notificacion) =>
+      obtenerConfiguracionNotificacion(notificacion)
+        .decision === "rechazada"
+  ).length;
 
   const obtenerNotificaciones = useCallback(async () => {
     const token = localStorage.getItem("access");
@@ -60,13 +132,9 @@ function Notifications() {
         }
       );
 
-      let data = {};
-
-      try {
-        data = await response.json();
-      } catch {
-        data = {};
-      }
+      const data = await response
+        .json()
+        .catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
@@ -145,13 +213,9 @@ function Notifications() {
         }
       );
 
-      let data = {};
-
-      try {
-        data = await response.json();
-      } catch {
-        data = {};
-      }
+      const data = await response
+        .json()
+        .catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
@@ -219,13 +283,9 @@ function Notifications() {
         }
       );
 
-      let data = {};
-
-      try {
-        data = await response.json();
-      } catch {
-        data = {};
-      }
+      const data = await response
+        .json()
+        .catch(() => ({}));
 
       if (!response.ok) {
         throw new Error(
@@ -306,6 +366,13 @@ function Notifications() {
               👥 Grupos
             </button>
 
+            <button
+              className="sidebar-link"
+              onClick={() => navigate("/mis-deudas")}
+            >
+              💳 Mis deudas
+            </button>
+
             <button className="sidebar-link active">
               🔔 Notificaciones
               {noLeidas > 0 && (
@@ -313,6 +380,13 @@ function Notifications() {
                   {noLeidas > 99 ? "99+" : noLeidas}
                 </span>
               )}
+            </button>
+
+            <button
+              className="sidebar-link"
+              onClick={() => navigate("/resumen")}
+            >
+              📊 Resumen
             </button>
 
             <button className="sidebar-link">
@@ -399,6 +473,20 @@ function Notifications() {
             <small>No leídas</small>
             <strong>{noLeidas}</strong>
           </div>
+
+          <div className="notifications-summary-card">
+            <small>Solicitudes aprobadas</small>
+            <strong className="text-success">
+              {solicitudesAprobadas}
+            </strong>
+          </div>
+
+          <div className="notifications-summary-card">
+            <small>Solicitudes rechazadas</small>
+            <strong className="text-danger">
+              {solicitudesRechazadas}
+            </strong>
+          </div>
         </section>
 
         {mensaje && !error && (
@@ -442,7 +530,13 @@ function Notifications() {
             </div>
           ) : (
             <div className="notifications-list">
-              {notificaciones.map((notificacion) => (
+              {notificaciones.map((notificacion) => {
+                const configuracion =
+                  obtenerConfiguracionNotificacion(
+                    notificacion
+                  );
+
+                return (
                 <article
                   key={notificacion.id}
                   className={`notification-item ${
@@ -452,7 +546,7 @@ function Notifications() {
                   }`}
                 >
                   <div className="notification-item-icon">
-                    {notificacion.leida ? "✓" : "🔔"}
+                    {configuracion.icono}
                   </div>
 
                   <div className="notification-item-content">
@@ -460,6 +554,14 @@ function Notifications() {
                       <div>
                         <div className="d-flex flex-wrap align-items-center gap-2">
                           <h4>{notificacion.titulo}</h4>
+
+                          <span
+                            className={`badge ${
+                              configuracion.claseEtiqueta
+                            }`}
+                          >
+                            {configuracion.etiqueta}
+                          </span>
 
                           <span
                             className={`badge ${
@@ -490,6 +592,17 @@ function Notifications() {
                     </div>
 
                     <p>{notificacion.mensaje}</p>
+
+                    {configuracion.esDecisionDeuda && (
+                      <div
+                        className={`alert ${
+                          configuracion.claseResultado
+                        } py-2 mt-3 mb-0`}
+                        role="status"
+                      >
+                        {configuracion.textoResultado}
+                      </div>
+                    )}
 
                     {notificacion.leida &&
                       notificacion.fecha_lectura && (
@@ -533,13 +646,14 @@ function Notifications() {
                             notificacion.id
                           }
                         >
-                          Abrir recurso relacionado
+                          {configuracion.textoBoton}
                         </button>
                       )}
                     </div>
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>

@@ -59,7 +59,21 @@ def prueba_api(request):
     })
 
 
+def procesar_cierres_vencidos():
+    """
+    Procesa actividades cuya fecha final ya venció.
+
+    El método del modelo es idempotente y utiliza bloqueos
+    de base de datos, por lo que puede ejecutarse varias
+    veces sin duplicar saldos, deudas ni historial.
+    """
+    return Group.cerrar_actividades_vencidas(
+        momento=timezone.now()
+    )
+
+
 def grupos_visibles_para_usuario(usuario):
+    procesar_cierres_vencidos()
     return (
         Group.objects
         .filter(
@@ -193,6 +207,36 @@ def respuesta_error_validacion(
     }
 
 
+def crear_notificacion_nueva_solicitud_deuda(
+    solicitud,
+):
+    grupo = solicitud.grupo
+    responsable = grupo.responsable_deudas
+
+    if (
+        not responsable
+        or responsable.id
+        == solicitud.solicitante_id
+    ):
+        return None
+
+    return Notification.objects.create(
+        usuario=responsable,
+        titulo=(
+            "Nueva solicitud de resolución "
+            f'en "{grupo.nombre}"'
+        ),
+        mensaje=(
+            f"{solicitud.solicitante.username} envió "
+            f"una solicitud para revisar la deuda "
+            f"#{solicitud.deuda_id}."
+        ),
+        enlace=(
+            f"/grupos/{grupo.id}/solicitudes-deuda"
+        ),
+    )
+
+
 def crear_notificaciones_nuevo_gasto(
     gasto,
     usuario_registro,
@@ -264,6 +308,15 @@ class GroupListCreateView(generics.ListCreateAPIView):
             usuario=self.request.user,
         )
 
+        (
+            asignacion_responsable,
+            responsable_asignado,
+        ) = grupo.asignar_responsable_deudas(
+            responsable=self.request.user,
+            asignado_por=self.request.user,
+            momento=timezone.now(),
+        )
+
         registrar_evento_historial(
             grupo=grupo,
             usuario=self.request.user,
@@ -278,6 +331,15 @@ class GroupListCreateView(generics.ListCreateAPIView):
                 **datos_grupo_historial(grupo),
                 "membresia_creador_id": (
                     membresia_creador.id
+                ),
+                "responsable_deudas_id": (
+                    self.request.user.id
+                ),
+                "asignacion_responsable_id": (
+                    asignacion_responsable.id
+                ),
+                "responsable_asignado": (
+                    responsable_asignado
                 ),
             },
         )
@@ -586,6 +648,8 @@ class ParticipantDebtWarningView(APIView):
         pk,
         usuario_id,
     ):
+        procesar_cierres_vencidos()
+
         grupo = (
             Group.objects
             .filter(
@@ -661,6 +725,8 @@ class AddParticipantView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
+        procesar_cierres_vencidos()
+
         grupo = (
             Group.objects
             .filter(
@@ -2099,6 +2165,8 @@ class OwnDebtListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
+        procesar_cierres_vencidos()
+
         deudas = (
             Debt.objects
             .filter(
@@ -2166,6 +2234,8 @@ class OwnDebtDetailView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, deuda_id):
+        procesar_cierres_vencidos()
+
         deuda = (
             Debt.objects
             .filter(
@@ -2249,6 +2319,8 @@ class OwnDebtResolutionRequestListCreateView(
         )
 
     def get(self, request, deuda_id):
+        procesar_cierres_vencidos()
+
         deuda = self.obtener_deuda(
             request,
             deuda_id,
@@ -2307,6 +2379,8 @@ class OwnDebtResolutionRequestListCreateView(
         )
 
     def post(self, request, deuda_id):
+        procesar_cierres_vencidos()
+
         deuda = self.obtener_deuda(
             request,
             deuda_id,
@@ -2339,7 +2413,14 @@ class OwnDebtResolutionRequestListCreateView(
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        solicitud = serializer.save()
+        with transaction.atomic():
+            solicitud = serializer.save()
+
+            notificacion_responsable = (
+                crear_notificacion_nueva_solicitud_deuda(
+                    solicitud
+                )
+            )
 
         deuda.refresh_from_db()
 
@@ -2363,6 +2444,20 @@ class OwnDebtResolutionRequestListCreateView(
                         "request": request,
                     },
                 ).data,
+                "notificacion_generada": (
+                    notificacion_responsable
+                    is not None
+                ),
+                "notificacion_responsable": (
+                    NotificationSerializer(
+                        notificacion_responsable,
+                        context={
+                            "request": request,
+                        },
+                    ).data
+                    if notificacion_responsable
+                    else None
+                ),
             },
             status=status.HTTP_201_CREATED,
         )
