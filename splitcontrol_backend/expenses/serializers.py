@@ -1,6 +1,10 @@
 from decimal import Decimal
+from pathlib import Path
 
 from django.contrib.auth.models import User
+from django.core.exceptions import (
+    ValidationError as DjangoValidationError,
+)
 from django.db import transaction
 from django.db.models import Sum
 from rest_framework import serializers
@@ -9,6 +13,7 @@ from .models import (
     ActivityHistory,
     ClosingBalance,
     Debt,
+    DebtResolutionRequest,
     DebtReviewAssignment,
     Expense,
     ExpenseDivision,
@@ -117,6 +122,80 @@ class DebtReviewAssignmentRequestSerializer(
             )
 
         return value
+
+
+
+class ParticipantDebtWarningRequestSerializer(
+    serializers.Serializer
+):
+    usuario_id = serializers.IntegerField(
+        required=True,
+        min_value=1,
+    )
+
+    def validate_usuario_id(self, value):
+        if not User.objects.filter(
+            id=value
+        ).exists():
+            raise serializers.ValidationError(
+                "El usuario seleccionado no existe."
+            )
+
+        return value
+
+
+class ParticipantIncorporationSerializer(
+    serializers.Serializer
+):
+    usuario_id = serializers.IntegerField(
+        required=True,
+        min_value=1,
+    )
+
+    confirmar_deudas = serializers.BooleanField(
+        required=False,
+        default=False,
+    )
+
+    def validate_usuario_id(self, value):
+        if not User.objects.filter(
+            id=value
+        ).exists():
+            raise serializers.ValidationError(
+                "El usuario seleccionado no existe."
+            )
+
+        return value
+
+
+class ParticipantDebtWarningSerializer(
+    serializers.Serializer
+):
+    usuario = serializers.DictField(
+        read_only=True,
+    )
+
+    tiene_deudas_pendientes = serializers.BooleanField(
+        read_only=True,
+    )
+
+    requiere_confirmacion = serializers.BooleanField(
+        read_only=True,
+    )
+
+    cantidad_deudas_pendientes = serializers.IntegerField(
+        read_only=True,
+    )
+
+    monto_total_pendiente = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+
+    mensaje = serializers.CharField(
+        read_only=True,
+    )
 
 
 class GroupMembershipSerializer(
@@ -706,6 +785,227 @@ class ClosingBalanceSerializer(
         )
 
 
+
+class DebtResolutionRequestSerializer(
+    serializers.ModelSerializer
+):
+    deuda_id = serializers.IntegerField(
+        source="deuda.id",
+        read_only=True,
+    )
+
+    grupo_id = serializers.IntegerField(
+        source="grupo.id",
+        read_only=True,
+    )
+
+    solicitante = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    solicitante_id = serializers.IntegerField(
+        source="solicitante.id",
+        read_only=True,
+    )
+
+    revisado_por = UserSimpleSerializer(
+        read_only=True,
+    )
+
+    estado_display = serializers.CharField(
+        source="get_estado_display",
+        read_only=True,
+    )
+
+    decision_display = serializers.CharField(
+        source="get_decision_display",
+        read_only=True,
+    )
+
+    evidencia = serializers.FileField(
+        read_only=True,
+    )
+
+    pendiente_revision = serializers.BooleanField(
+        read_only=True,
+    )
+
+    puede_editarse = serializers.BooleanField(
+        read_only=True,
+    )
+
+    class Meta:
+        model = DebtResolutionRequest
+        fields = [
+            "id",
+            "deuda_id",
+            "grupo_id",
+            "grupo_nombre",
+            "solicitante",
+            "solicitante_id",
+            "solicitante_username",
+            "descripcion",
+            "evidencia",
+            "evidencia_nombre_original",
+            "estado",
+            "estado_display",
+            "decision",
+            "decision_display",
+            "observacion_revision",
+            "revisado_por",
+            "revisado_por_username",
+            "fecha_envio",
+            "fecha_revision",
+            "fecha_actualizacion",
+            "pendiente_revision",
+            "puede_editarse",
+        ]
+
+        read_only_fields = fields
+
+
+class DebtResolutionRequestCreateSerializer(
+    serializers.Serializer
+):
+    descripcion = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        trim_whitespace=True,
+        max_length=2000,
+    )
+
+    evidencia = serializers.FileField(
+        required=True,
+        allow_empty_file=False,
+    )
+
+    FORMATOS_ADMITIDOS = {
+        ".pdf",
+        ".jpg",
+        ".jpeg",
+        ".png",
+    }
+
+    def validate_descripcion(self, value):
+        descripcion = value.strip()
+
+        if not descripcion:
+            raise serializers.ValidationError(
+                "La descripción o explicación es obligatoria."
+            )
+
+        return descripcion
+
+    def validate_evidencia(self, value):
+        extension = Path(
+            value.name
+        ).suffix.lower()
+
+        if extension not in self.FORMATOS_ADMITIDOS:
+            raise serializers.ValidationError(
+                (
+                    "La evidencia debe estar en formato "
+                    "PDF, JPG, JPEG o PNG."
+                )
+            )
+
+        return value
+
+    def validate(self, attrs):
+        deuda = self.context.get("deuda")
+        request = self.context.get("request")
+
+        usuario = (
+            request.user
+            if request
+            and request.user.is_authenticated
+            else None
+        )
+
+        if not deuda:
+            raise serializers.ValidationError({
+                "deuda": (
+                    "No se pudo identificar la deuda."
+                )
+            })
+
+        if not usuario:
+            raise serializers.ValidationError({
+                "usuario": (
+                    "No se pudo identificar al usuario "
+                    "que envía la solicitud."
+                )
+            })
+
+        if deuda.participante_id != usuario.id:
+            raise serializers.ValidationError({
+                "deuda": (
+                    "Solo puedes enviar solicitudes "
+                    "sobre tus propias deudas."
+                )
+            })
+
+        if (
+            deuda.estado != Debt.ESTADO_PENDIENTE
+            or deuda.saldo_pendiente <= CERO
+        ):
+            raise serializers.ValidationError({
+                "deuda": (
+                    "La deuda debe encontrarse pendiente "
+                    "y mantener saldo para enviar "
+                    "una solicitud."
+                )
+            })
+
+        if DebtResolutionRequest.objects.filter(
+            deuda=deuda,
+            estado=(
+                DebtResolutionRequest
+                .ESTADO_PENDIENTE_REVISION
+            ),
+        ).exists():
+            raise serializers.ValidationError({
+                "deuda": (
+                    "Ya existe una solicitud pendiente "
+                    "de revisión para esta deuda."
+                )
+            })
+
+        return attrs
+
+    @transaction.atomic
+    def create(self, validated_data):
+        deuda = self.context["deuda"]
+        request = self.context["request"]
+
+        try:
+            return (
+                DebtResolutionRequest
+                .crear_para_deuda(
+                    deuda=deuda,
+                    solicitante=request.user,
+                    descripcion=validated_data[
+                        "descripcion"
+                    ],
+                    evidencia=validated_data[
+                        "evidencia"
+                    ],
+                )
+            )
+        except DjangoValidationError as error:
+            if hasattr(
+                error,
+                "message_dict",
+            ):
+                raise serializers.ValidationError(
+                    error.message_dict
+                )
+
+            raise serializers.ValidationError({
+                "error": error.messages
+            })
+
+
 class DebtSerializer(
     serializers.ModelSerializer
 ):
@@ -760,6 +1060,20 @@ class DebtSerializer(
         read_only=True,
     )
 
+    actividad = serializers.SerializerMethodField()
+
+    solicitudes = serializers.SerializerMethodField()
+
+    cantidad_solicitudes = serializers.SerializerMethodField()
+
+    tiene_solicitud_pendiente = (
+        serializers.BooleanField(
+            read_only=True,
+        )
+    )
+
+    mensaje_solicitudes = serializers.SerializerMethodField()
+
     class Meta:
         model = Debt
         fields = [
@@ -779,6 +1093,11 @@ class DebtSerializer(
             "asociada_a_actividad",
             "acreedor",
             "caso_todos_deben",
+            "actividad",
+            "solicitudes",
+            "cantidad_solicitudes",
+            "tiene_solicitud_pendiente",
+            "mensaje_solicitudes",
             "fecha_generacion",
             "fecha_actualizacion",
             "fecha_resolucion",
@@ -816,6 +1135,69 @@ class DebtSerializer(
 
     def get_acreedor(self, obj):
         return None
+
+    def get_actividad(self, obj):
+        return {
+            "id": obj.grupo_id,
+            "nombre": obj.grupo_nombre,
+            "estado": obj.grupo.estado,
+            "fecha_cierre": (
+                obj.grupo.fecha_cierre_automatico
+            ),
+        }
+
+    def get_solicitudes(self, obj):
+        solicitudes = (
+            obj.obtener_solicitudes_ordenadas()
+        )
+
+        return DebtResolutionRequestSerializer(
+            solicitudes,
+            many=True,
+            context=self.context,
+        ).data
+
+    def get_cantidad_solicitudes(self, obj):
+        return (
+            obj.solicitudes_resolucion
+            .count()
+        )
+
+    def get_mensaje_solicitudes(self, obj):
+        if obj.solicitudes_resolucion.exists():
+            return (
+                "Solicitudes de resolución "
+                "consultadas correctamente."
+            )
+
+        return (
+            "Esta deuda todavía no tiene "
+            "solicitudes de resolución."
+        )
+
+
+
+class OwnDebtsResponseSerializer(
+    serializers.Serializer
+):
+    mensaje = serializers.CharField(
+        read_only=True,
+    )
+
+    total_deudas = serializers.IntegerField(
+        read_only=True,
+    )
+
+    monto_total_pendiente = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        read_only=True,
+    )
+
+    deudas = DebtSerializer(
+        many=True,
+        read_only=True,
+    )
 
 
 class NotificationSerializer(
