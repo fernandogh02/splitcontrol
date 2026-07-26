@@ -44,6 +44,12 @@ class Group(models.Model):
         editable=False,
     )
 
+    fecha_generacion_saldos = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+    )
+
     fecha_creacion = models.DateTimeField(
         auto_now_add=True,
     )
@@ -152,6 +158,12 @@ class Group(models.Model):
             ]
         )
 
+        resumen_saldos = (
+            grupo_bloqueado.generar_saldos_cierre(
+                momento=momento
+            )
+        )
+
         ActivityHistory.registrar(
             grupo=grupo_bloqueado,
             usuario=None,
@@ -177,6 +189,7 @@ class Group(models.Model):
                 "procesado_en": momento.isoformat(),
                 "estado": self.ESTADO_CERRADA,
                 "origen": "sistema",
+                "saldos_cierre": resumen_saldos,
             },
         )
 
@@ -184,7 +197,275 @@ class Group(models.Model):
             grupo_bloqueado.fecha_cierre_automatico
         )
 
+        self.fecha_generacion_saldos = (
+            grupo_bloqueado.fecha_generacion_saldos
+        )
+
         return True
+
+    @transaction.atomic
+    def generar_saldos_cierre(
+        self,
+        momento=None,
+    ):
+        momento = momento or timezone.now()
+
+        if not self.pk:
+            raise ValidationError(
+                "La actividad debe existir antes de generar saldos."
+            )
+
+        grupo_bloqueado = (
+            Group.objects
+            .select_for_update()
+            .get(pk=self.pk)
+        )
+
+        if not grupo_bloqueado.fecha_cierre_automatico:
+            raise ValidationError(
+                (
+                    "Los saldos solo pueden generarse "
+                    "cuando la actividad está cerrada."
+                )
+            )
+
+        if grupo_bloqueado.fecha_generacion_saldos:
+            return (
+                grupo_bloqueado
+                .obtener_resumen_saldos_cierre(
+                    generados=False
+                )
+            )
+
+        cuotas_por_usuario = {
+            fila["participante_id"]: (
+                fila["cuota_total"]
+                or Decimal("0.00")
+            )
+            for fila in (
+                ExpenseDivision.objects
+                .filter(
+                    gasto__grupo=grupo_bloqueado
+                )
+                .values("participante_id")
+                .annotate(
+                    cuota_total=models.Sum(
+                        "monto_asignado"
+                    )
+                )
+            )
+        }
+
+        pagos_por_usuario = {
+            fila["pagador_id"]: (
+                fila["total_pagado"]
+                or Decimal("0.00")
+            )
+            for fila in (
+                Payment.objects
+                .filter(
+                    grupo=grupo_bloqueado
+                )
+                .values("pagador_id")
+                .annotate(
+                    total_pagado=models.Sum(
+                        "monto"
+                    )
+                )
+            )
+        }
+
+        usuarios_ids = sorted(
+            set(cuotas_por_usuario)
+            | set(pagos_por_usuario)
+        )
+
+        usuarios = {
+            usuario.id: usuario
+            for usuario in User.objects.filter(
+                id__in=usuarios_ids
+            )
+        }
+
+        saldos_creados = []
+        deudas_creadas = []
+
+        total_cuotas = Decimal("0.00")
+        total_pagado = Decimal("0.00")
+        total_pendiente = Decimal("0.00")
+
+        for usuario_id in usuarios_ids:
+            usuario = usuarios.get(
+                usuario_id
+            )
+
+            if not usuario:
+                continue
+
+            cuota_total = (
+                cuotas_por_usuario.get(
+                    usuario_id,
+                    Decimal("0.00"),
+                )
+            ).quantize(
+                Decimal("0.01")
+            )
+
+            pagado_total = (
+                pagos_por_usuario.get(
+                    usuario_id,
+                    Decimal("0.00"),
+                )
+            ).quantize(
+                Decimal("0.01")
+            )
+
+            saldo_pendiente = (
+                cuota_total
+                - pagado_total
+            ).quantize(
+                Decimal("0.01")
+            )
+
+            if saldo_pendiente < Decimal("0.00"):
+                saldo_pendiente = Decimal("0.00")
+
+            estado = (
+                ClosingBalance.ESTADO_SALDADO
+                if saldo_pendiente == Decimal("0.00")
+                else ClosingBalance.ESTADO_PENDIENTE
+            )
+
+            saldo = ClosingBalance.objects.create(
+                grupo=grupo_bloqueado,
+                grupo_nombre=grupo_bloqueado.nombre,
+                participante=usuario,
+                participante_username=usuario.username,
+                cuota_total=cuota_total,
+                total_pagado=pagado_total,
+                saldo_pendiente=saldo_pendiente,
+                estado=estado,
+            )
+
+            saldos_creados.append(
+                saldo
+            )
+
+            if saldo_pendiente > Decimal("0.00"):
+                deuda = Debt.objects.create(
+                    grupo=grupo_bloqueado,
+                    grupo_nombre=grupo_bloqueado.nombre,
+                    saldo_cierre=saldo,
+                    participante=usuario,
+                    participante_username=usuario.username,
+                    monto_original=saldo_pendiente,
+                    saldo_pendiente=saldo_pendiente,
+                    estado=Debt.ESTADO_PENDIENTE,
+                )
+
+                deudas_creadas.append(
+                    deuda
+                )
+
+            total_cuotas += cuota_total
+            total_pagado += pagado_total
+            total_pendiente += saldo_pendiente
+
+        grupo_bloqueado.fecha_generacion_saldos = (
+            momento
+        )
+
+        grupo_bloqueado.save(
+            update_fields=[
+                "fecha_generacion_saldos",
+            ]
+        )
+
+        self.fecha_generacion_saldos = (
+            grupo_bloqueado.fecha_generacion_saldos
+        )
+
+        if not saldos_creados:
+            mensaje = (
+                "La actividad cerró sin gastos, pagos "
+                "ni saldos pendientes."
+            )
+        elif not deudas_creadas:
+            mensaje = (
+                "Todos los participantes quedaron saldados."
+            )
+        else:
+            mensaje = (
+                "Saldos pendientes generados correctamente."
+            )
+
+        return {
+            "generados": True,
+            "mensaje": mensaje,
+            "total_saldos": len(saldos_creados),
+            "total_deudas": len(deudas_creadas),
+            "total_cuotas": f"{total_cuotas:.2f}",
+            "total_pagado": f"{total_pagado:.2f}",
+            "total_pendiente": f"{total_pendiente:.2f}",
+        }
+
+    def obtener_resumen_saldos_cierre(
+        self,
+        generados=None,
+    ):
+        saldos = self.saldos_cierre.all()
+
+        total_cuotas = (
+            saldos.aggregate(
+                total=models.Sum("cuota_total")
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        total_pagado = (
+            saldos.aggregate(
+                total=models.Sum("total_pagado")
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        total_pendiente = (
+            saldos.aggregate(
+                total=models.Sum("saldo_pendiente")
+            )["total"]
+            or Decimal("0.00")
+        )
+
+        total_saldos = saldos.count()
+        total_deudas = self.deudas_generadas.count()
+
+        if total_saldos == 0:
+            mensaje = (
+                "La actividad cerró sin gastos, pagos "
+                "ni saldos pendientes."
+            )
+        elif total_deudas == 0:
+            mensaje = (
+                "Todos los participantes quedaron saldados."
+            )
+        else:
+            mensaje = (
+                "Saldos pendientes consultados correctamente."
+            )
+
+        respuesta = {
+            "mensaje": mensaje,
+            "total_saldos": total_saldos,
+            "total_deudas": total_deudas,
+            "total_cuotas": f"{total_cuotas:.2f}",
+            "total_pagado": f"{total_pagado:.2f}",
+            "total_pendiente": f"{total_pendiente:.2f}",
+        }
+
+        if generados is not None:
+            respuesta["generados"] = generados
+
+        return respuesta
 
     @classmethod
     def cerrar_actividades_vencidas(
@@ -569,6 +850,290 @@ class Payment(models.Model):
             f"{self.pagador.username} aportó "
             f"${self.monto} en "
             f"{self.grupo.nombre}"
+        )
+
+
+class ClosingBalance(models.Model):
+    ESTADO_PENDIENTE = "pendiente"
+    ESTADO_SALDADO = "saldado"
+
+    ESTADOS = [
+        (
+            ESTADO_PENDIENTE,
+            "Pendiente",
+        ),
+        (
+            ESTADO_SALDADO,
+            "Saldado",
+        ),
+    ]
+
+    grupo = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name="saldos_cierre",
+    )
+
+    grupo_nombre = models.CharField(
+        max_length=100,
+    )
+
+    participante = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="saldos_cierre_actividades",
+    )
+
+    participante_username = models.CharField(
+        max_length=150,
+    )
+
+    cuota_total = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[
+            MinValueValidator(
+                Decimal("0.00"),
+            )
+        ],
+    )
+
+    total_pagado = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[
+            MinValueValidator(
+                Decimal("0.00"),
+            )
+        ],
+    )
+
+    saldo_pendiente = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[
+            MinValueValidator(
+                Decimal("0.00"),
+            )
+        ],
+    )
+
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+    )
+
+    fecha_generacion = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    class Meta:
+        ordering = [
+            "participante_username",
+            "id",
+        ]
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "grupo",
+                    "participante",
+                ],
+                name=(
+                    "saldo_cierre_unico_por_"
+                    "grupo_participante"
+                ),
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    cuota_total__gte=Decimal("0.00")
+                ),
+                name="saldo_cierre_cuota_no_negativa",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    total_pagado__gte=Decimal("0.00")
+                ),
+                name="saldo_cierre_pago_no_negativo",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    saldo_pendiente__gte=Decimal("0.00")
+                ),
+                name="saldo_cierre_pendiente_no_negativo",
+            ),
+        ]
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "grupo",
+                    "estado",
+                ],
+                name="saldo_grupo_estado_idx",
+            ),
+            models.Index(
+                fields=[
+                    "participante",
+                    "estado",
+                ],
+                name="saldo_usuario_estado_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.participante_username} - "
+            f"{self.grupo_nombre} - "
+            f"${self.saldo_pendiente} - "
+            f"{self.get_estado_display()}"
+        )
+
+
+class Debt(models.Model):
+    ESTADO_PENDIENTE = "pendiente"
+    ESTADO_EN_REVISION = "en_revision"
+    ESTADO_RESUELTA = "resuelta"
+    ESTADO_RECHAZADA = "rechazada"
+
+    ESTADOS = [
+        (
+            ESTADO_PENDIENTE,
+            "Pendiente",
+        ),
+        (
+            ESTADO_EN_REVISION,
+            "En revisión",
+        ),
+        (
+            ESTADO_RESUELTA,
+            "Resuelta",
+        ),
+        (
+            ESTADO_RECHAZADA,
+            "Rechazada",
+        ),
+    ]
+
+    grupo = models.ForeignKey(
+        Group,
+        on_delete=models.CASCADE,
+        related_name="deudas_generadas",
+    )
+
+    grupo_nombre = models.CharField(
+        max_length=100,
+    )
+
+    saldo_cierre = models.OneToOneField(
+        ClosingBalance,
+        on_delete=models.PROTECT,
+        related_name="deuda",
+    )
+
+    participante = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        related_name="deudas_actividades",
+    )
+
+    participante_username = models.CharField(
+        max_length=150,
+    )
+
+    monto_original = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[
+            MinValueValidator(
+                Decimal("0.01"),
+            )
+        ],
+    )
+
+    saldo_pendiente = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        validators=[
+            MinValueValidator(
+                Decimal("0.00"),
+            )
+        ],
+    )
+
+    estado = models.CharField(
+        max_length=20,
+        choices=ESTADOS,
+        default=ESTADO_PENDIENTE,
+    )
+
+    fecha_generacion = models.DateTimeField(
+        auto_now_add=True,
+    )
+
+    fecha_actualizacion = models.DateTimeField(
+        auto_now=True,
+    )
+
+    fecha_resolucion = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
+
+    class Meta:
+        ordering = [
+            "-fecha_generacion",
+            "-id",
+        ]
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "grupo",
+                    "participante",
+                ],
+                name=(
+                    "deuda_unica_por_"
+                    "grupo_participante"
+                ),
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    monto_original__gt=Decimal("0.00")
+                ),
+                name="deuda_monto_original_positivo",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    saldo_pendiente__gte=Decimal("0.00")
+                ),
+                name="deuda_saldo_no_negativo",
+            ),
+        ]
+
+        indexes = [
+            models.Index(
+                fields=[
+                    "participante",
+                    "estado",
+                    "-fecha_generacion",
+                ],
+                name="deuda_usuario_estado_idx",
+            ),
+            models.Index(
+                fields=[
+                    "grupo",
+                    "estado",
+                ],
+                name="deuda_grupo_estado_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.participante_username} debe "
+            f"${self.saldo_pendiente} en "
+            f"{self.grupo_nombre}"
         )
 
 

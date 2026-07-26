@@ -11,6 +11,8 @@ from rest_framework.views import APIView
 
 from .models import (
     ActivityHistory,
+    ClosingBalance,
+    Debt,
     Expense,
     Group,
     GroupMembership,
@@ -24,6 +26,8 @@ from .services import (
 )
 from .serializers import (
     ActivityHistorySerializer,
+    ClosingBalanceSerializer,
+    DebtSerializer,
     ExpenseSerializer,
     GroupMembershipSerializer,
     GroupSerializer,
@@ -1150,6 +1154,132 @@ class GroupEconomicSummaryView(APIView):
                 },
                 "total_participantes": len(cuotas),
                 "cuotas": cuotas,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class GroupClosingBalanceView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        grupo = obtener_grupo_visible_para_usuario(
+            request.user,
+            pk,
+        )
+
+        if not grupo:
+            return Response(
+                {
+                    "error": (
+                        "Grupo no encontrado o no tienes permiso "
+                        "para consultar sus saldos de cierre."
+                    )
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not grupo_esta_cerrado(grupo):
+            return Response(
+                {
+                    "error": (
+                        "Los saldos de cierre solo están "
+                        "disponibles cuando la actividad "
+                        "ha finalizado."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not grupo.fecha_generacion_saldos:
+            return Response(
+                {
+                    "error": (
+                        "El cierre automático todavía no ha "
+                        "generado los saldos de la actividad."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        saldos = (
+            ClosingBalance.objects
+            .filter(grupo=grupo)
+            .select_related(
+                "grupo",
+                "participante",
+            )
+            .order_by(
+                "participante_username",
+                "id",
+            )
+        )
+
+        deudas = (
+            Debt.objects
+            .filter(grupo=grupo)
+            .select_related(
+                "grupo",
+                "participante",
+                "saldo_cierre",
+            )
+            .order_by(
+                "-fecha_generacion",
+                "-id",
+            )
+        )
+
+        resumen = (
+            grupo.obtener_resumen_saldos_cierre()
+        )
+
+        total_saldados = saldos.filter(
+            estado=ClosingBalance.ESTADO_SALDADO
+        ).count()
+
+        total_pendientes = saldos.filter(
+            estado=ClosingBalance.ESTADO_PENDIENTE
+        ).count()
+
+        return Response(
+            {
+                "grupo_id": grupo.id,
+                "grupo_nombre": grupo.nombre,
+                "estado_actividad": grupo.estado,
+                "fecha_cierre_automatico": (
+                    grupo.fecha_cierre_automatico
+                ),
+                "fecha_generacion_saldos": (
+                    grupo.fecha_generacion_saldos
+                ),
+                "mensaje": resumen["mensaje"],
+                "resumen": {
+                    "total_saldos": (
+                        resumen["total_saldos"]
+                    ),
+                    "total_saldados": total_saldados,
+                    "total_pendientes": total_pendientes,
+                    "total_deudas": (
+                        resumen["total_deudas"]
+                    ),
+                    "total_cuotas": (
+                        resumen["total_cuotas"]
+                    ),
+                    "total_pagado": (
+                        resumen["total_pagado"]
+                    ),
+                    "total_pendiente": (
+                        resumen["total_pendiente"]
+                    ),
+                },
+                "saldos": ClosingBalanceSerializer(
+                    saldos,
+                    many=True,
+                ).data,
+                "deudas": DebtSerializer(
+                    deudas,
+                    many=True,
+                ).data,
             },
             status=status.HTTP_200_OK,
         )

@@ -4,6 +4,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.core.management import call_command
 from django.utils import timezone
 from rest_framework import status
@@ -11,6 +12,8 @@ from rest_framework.test import APITestCase
 
 from expenses.models import (
     ActivityHistory,
+    ClosingBalance,
+    Debt,
     Expense,
     ExpenseDivision,
     Group,
@@ -6484,4 +6487,950 @@ class CierreAutomaticoActividadSC57Test(APITestCase):
             historial.data["total_eventos"],
             2,
         )
+
+
+class GenerarSaldosPendientesSC58Test(APITestCase):
+
+    def setUp(self):
+        self.fernando = User.objects.create_user(
+            username="fernando_sc58",
+            email="fernando_sc58@example.com",
+            password="Prueba123",
+        )
+
+        self.carlita = User.objects.create_user(
+            username="carlita_sc58",
+            email="carlita_sc58@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc58",
+            email="damarys_sc58@example.com",
+            password="Prueba123",
+        )
+
+        self.externo = User.objects.create_user(
+            username="externo_sc58",
+            email="externo_sc58@example.com",
+            password="Prueba123",
+        )
+
+        self.momento_base = timezone.now()
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad económica SC-58",
+            descripcion="Generación de saldos al cierre",
+            creador=self.fernando,
+            fecha_inicio=(
+                self.momento_base
+                - timedelta(days=3)
+            ),
+            fecha_fin=(
+                self.momento_base
+                - timedelta(hours=1)
+            ),
+        )
+
+        self.grupo.participantes.add(
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        )
+
+        self.membresia_fernando = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.fernando,
+            )
+        )
+
+        self.membresia_carlita = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.carlita,
+            )
+        )
+
+        self.membresia_damarys = (
+            GroupMembership.objects.create(
+                grupo=self.grupo,
+                usuario=self.damarys,
+            )
+        )
+
+        self.gasto_uno = Expense.objects.create(
+            grupo=self.grupo,
+            descripcion="Hospedaje SC-58",
+            monto=Decimal("60.00"),
+            fecha_gasto="2026-07-24",
+            registrado_por=self.fernando,
+        )
+        self.gasto_uno.sincronizar_integrantes_activos()
+
+        self.membresia_damarys.retirar()
+        self.grupo.participantes.remove(
+            self.damarys
+        )
+
+        self.gasto_dos = Expense.objects.create(
+            grupo=self.grupo,
+            descripcion="Transporte SC-58",
+            monto=Decimal("30.00"),
+            fecha_gasto="2026-07-25",
+            registrado_por=self.carlita,
+        )
+        self.gasto_dos.sincronizar_integrantes_activos()
+
+        Payment.objects.create(
+            grupo=self.grupo,
+            pagador=self.fernando,
+            monto=Decimal("25.00"),
+            fecha_pago="2026-07-25",
+            registrado_por=self.fernando,
+        )
+
+        Payment.objects.create(
+            grupo=self.grupo,
+            pagador=self.carlita,
+            monto=Decimal("35.00"),
+            fecha_pago="2026-07-25",
+            registrado_por=self.carlita,
+        )
+
+        self.url = (
+            f"/api/grupos/{self.grupo.id}/"
+            "saldos-cierre/"
+        )
+
+        self.client.force_authenticate(
+            user=self.fernando
+        )
+
+    def cerrar_actividad(self):
+        resultado = self.grupo.cerrar_automaticamente(
+            momento=self.momento_base
+        )
+
+        self.grupo.refresh_from_db()
+
+        return resultado
+
+    def saldos_por_usuario(self):
+        return {
+            saldo.participante_username: saldo
+            for saldo in ClosingBalance.objects.filter(
+                grupo=self.grupo
+            )
+        }
+
+    def test_cierre_genera_saldos_y_deudas_automaticamente(
+        self,
+    ):
+        resultado = self.cerrar_actividad()
+
+        self.assertTrue(
+            resultado
+        )
+
+        self.assertIsNotNone(
+            self.grupo.fecha_cierre_automatico
+        )
+
+        self.assertIsNotNone(
+            self.grupo.fecha_generacion_saldos
+        )
+
+        self.assertEqual(
+            ClosingBalance.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            3,
+        )
+
+        self.assertEqual(
+            Debt.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            2,
+        )
+
+        evento = ActivityHistory.objects.get(
+            grupo=self.grupo,
+            tipo_accion=(
+                ActivityHistory
+                .TIPO_ACTIVIDAD_CERRADA_AUTOMATICAMENTE
+            ),
+        )
+
+        self.assertEqual(
+            evento.datos["saldos_cierre"][
+                "total_saldos"
+            ],
+            3,
+        )
+
+        self.assertEqual(
+            evento.datos["saldos_cierre"][
+                "total_deudas"
+            ],
+            2,
+        )
+
+    def test_calculo_usa_gastos_divisiones_y_pagos_previos(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        saldos = self.saldos_por_usuario()
+
+        saldo_fernando = saldos["fernando_sc58"]
+        saldo_carlita = saldos["carlita_sc58"]
+        saldo_damarys = saldos["damarys_sc58"]
+
+        self.assertEqual(
+            saldo_fernando.cuota_total,
+            Decimal("35.00"),
+        )
+        self.assertEqual(
+            saldo_fernando.total_pagado,
+            Decimal("25.00"),
+        )
+        self.assertEqual(
+            saldo_fernando.saldo_pendiente,
+            Decimal("10.00"),
+        )
+
+        self.assertEqual(
+            saldo_carlita.cuota_total,
+            Decimal("35.00"),
+        )
+        self.assertEqual(
+            saldo_carlita.total_pagado,
+            Decimal("35.00"),
+        )
+        self.assertEqual(
+            saldo_carlita.saldo_pendiente,
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            saldo_damarys.cuota_total,
+            Decimal("20.00"),
+        )
+        self.assertEqual(
+            saldo_damarys.total_pagado,
+            Decimal("0.00"),
+        )
+        self.assertEqual(
+            saldo_damarys.saldo_pendiente,
+            Decimal("20.00"),
+        )
+
+    def test_participante_retirado_conserva_obligacion_historica(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        saldo = ClosingBalance.objects.get(
+            grupo=self.grupo,
+            participante=self.damarys,
+        )
+
+        deuda = Debt.objects.get(
+            grupo=self.grupo,
+            participante=self.damarys,
+        )
+
+        self.assertFalse(
+            GroupMembership.objects.filter(
+                grupo=self.grupo,
+                usuario=self.damarys,
+                activo=True,
+            ).exists()
+        )
+
+        self.assertEqual(
+            saldo.cuota_total,
+            Decimal("20.00"),
+        )
+
+        self.assertEqual(
+            saldo.saldo_pendiente,
+            Decimal("20.00"),
+        )
+
+        self.assertEqual(
+            deuda.saldo_pendiente,
+            Decimal("20.00"),
+        )
+
+    def test_estado_saldado_y_deuda_solo_para_saldo_positivo(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        saldo_carlita = ClosingBalance.objects.get(
+            grupo=self.grupo,
+            participante=self.carlita,
+        )
+
+        self.assertEqual(
+            saldo_carlita.estado,
+            ClosingBalance.ESTADO_SALDADO,
+        )
+
+        self.assertFalse(
+            Debt.objects.filter(
+                grupo=self.grupo,
+                participante=self.carlita,
+            ).exists()
+        )
+
+        for saldo in ClosingBalance.objects.filter(
+            grupo=self.grupo
+        ):
+            self.assertGreaterEqual(
+                saldo.saldo_pendiente,
+                Decimal("0.00"),
+            )
+
+        for deuda in Debt.objects.filter(
+            grupo=self.grupo
+        ):
+            self.assertGreater(
+                deuda.monto_original,
+                Decimal("0.00"),
+            )
+
+            self.assertGreaterEqual(
+                deuda.saldo_pendiente,
+                Decimal("0.00"),
+            )
+
+    def test_un_saldo_consolidado_por_participante_sin_duplicados(
+        self,
+    ):
+        primer_resultado = self.cerrar_actividad()
+
+        segundo_resultado = (
+            self.grupo.cerrar_automaticamente(
+                momento=(
+                    self.momento_base
+                    + timedelta(minutes=5)
+                )
+            )
+        )
+
+        resumen_repetido = (
+            self.grupo.generar_saldos_cierre(
+                momento=(
+                    self.momento_base
+                    + timedelta(minutes=10)
+                )
+            )
+        )
+
+        self.assertTrue(
+            primer_resultado
+        )
+
+        self.assertFalse(
+            segundo_resultado
+        )
+
+        self.assertFalse(
+            resumen_repetido["generados"]
+        )
+
+        self.assertEqual(
+            ClosingBalance.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            3,
+        )
+
+        self.assertEqual(
+            Debt.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            2,
+        )
+
+        for usuario in [
+            self.fernando,
+            self.carlita,
+            self.damarys,
+        ]:
+            self.assertEqual(
+                ClosingBalance.objects.filter(
+                    grupo=self.grupo,
+                    participante=usuario,
+                ).count(),
+                1,
+            )
+
+    def test_suma_saldos_coincide_con_total_pendiente(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        suma_saldos = sum(
+            ClosingBalance.objects.filter(
+                grupo=self.grupo
+            ).values_list(
+                "saldo_pendiente",
+                flat=True,
+            ),
+            Decimal("0.00"),
+        )
+
+        suma_deudas = sum(
+            Debt.objects.filter(
+                grupo=self.grupo
+            ).values_list(
+                "saldo_pendiente",
+                flat=True,
+            ),
+            Decimal("0.00"),
+        )
+
+        resumen = (
+            self.grupo.obtener_resumen_saldos_cierre()
+        )
+
+        self.assertEqual(
+            suma_saldos,
+            Decimal("30.00"),
+        )
+
+        self.assertEqual(
+            suma_deudas,
+            Decimal("30.00"),
+        )
+
+        self.assertEqual(
+            Decimal(resumen["total_pendiente"]),
+            Decimal("30.00"),
+        )
+
+        self.assertEqual(
+            Decimal(resumen["total_cuotas"]),
+            Decimal("90.00"),
+        )
+
+        self.assertEqual(
+            Decimal(resumen["total_pagado"]),
+            Decimal("60.00"),
+        )
+
+    def test_endpoint_muestra_valores_con_dos_decimales(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        response = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["estado_actividad"],
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertEqual(
+            response.data["resumen"]["total_saldos"],
+            3,
+        )
+
+        self.assertEqual(
+            response.data["resumen"]["total_saldados"],
+            1,
+        )
+
+        self.assertEqual(
+            response.data["resumen"]["total_pendientes"],
+            2,
+        )
+
+        self.assertEqual(
+            response.data["resumen"]["total_deudas"],
+            2,
+        )
+
+        self.assertEqual(
+            response.data["resumen"]["total_pendiente"],
+            "30.00",
+        )
+
+        for saldo in response.data["saldos"]:
+            for campo in [
+                "cuota_total",
+                "total_pagado",
+                "saldo_pendiente",
+            ]:
+                self.assertRegex(
+                    saldo[campo],
+                    r"^\d+\.\d{2}$",
+                )
+
+        for deuda in response.data["deudas"]:
+            for campo in [
+                "monto_original",
+                "saldo_pendiente",
+            ]:
+                self.assertRegex(
+                    deuda[campo],
+                    r"^\d+\.\d{2}$",
+                )
+
+    def test_actividad_totalmente_pagada_no_genera_deudas(
+        self,
+    ):
+        grupo_saldado = Group.objects.create(
+            nombre="Actividad saldada SC-58",
+            descripcion="Todos pagaron su cuota",
+            creador=self.fernando,
+            fecha_inicio=(
+                self.momento_base
+                - timedelta(days=2)
+            ),
+            fecha_fin=(
+                self.momento_base
+                - timedelta(minutes=30)
+            ),
+        )
+
+        grupo_saldado.participantes.add(
+            self.fernando,
+            self.carlita,
+        )
+
+        for usuario in [
+            self.fernando,
+            self.carlita,
+        ]:
+            GroupMembership.objects.create(
+                grupo=grupo_saldado,
+                usuario=usuario,
+            )
+
+        gasto = Expense.objects.create(
+            grupo=grupo_saldado,
+            descripcion="Cena pagada",
+            monto=Decimal("40.00"),
+            fecha_gasto="2026-07-25",
+            registrado_por=self.fernando,
+        )
+        gasto.sincronizar_integrantes_activos()
+
+        for usuario in [
+            self.fernando,
+            self.carlita,
+        ]:
+            Payment.objects.create(
+                grupo=grupo_saldado,
+                pagador=usuario,
+                monto=Decimal("20.00"),
+                fecha_pago="2026-07-25",
+                registrado_por=usuario,
+            )
+
+        grupo_saldado.cerrar_automaticamente(
+            momento=self.momento_base
+        )
+
+        self.assertEqual(
+            ClosingBalance.objects.filter(
+                grupo=grupo_saldado,
+                estado=ClosingBalance.ESTADO_SALDADO,
+            ).count(),
+            2,
+        )
+
+        self.assertEqual(
+            Debt.objects.filter(
+                grupo=grupo_saldado
+            ).count(),
+            0,
+        )
+
+        resumen = (
+            grupo_saldado
+            .obtener_resumen_saldos_cierre()
+        )
+
+        self.assertEqual(
+            resumen["mensaje"],
+            "Todos los participantes quedaron saldados.",
+        )
+
+        self.assertEqual(
+            resumen["total_pendiente"],
+            "0.00",
+        )
+
+    def test_actividad_sin_gastos_muestra_mensaje_informativo(
+        self,
+    ):
+        grupo_vacio = Group.objects.create(
+            nombre="Actividad vacía SC-58",
+            descripcion="Sin gastos ni pagos",
+            creador=self.fernando,
+            fecha_inicio=(
+                self.momento_base
+                - timedelta(days=1)
+            ),
+            fecha_fin=(
+                self.momento_base
+                - timedelta(minutes=15)
+            ),
+        )
+
+        grupo_vacio.participantes.add(
+            self.fernando
+        )
+
+        GroupMembership.objects.create(
+            grupo=grupo_vacio,
+            usuario=self.fernando,
+        )
+
+        grupo_vacio.cerrar_automaticamente(
+            momento=self.momento_base
+        )
+
+        response = self.client.get(
+            (
+                f"/api/grupos/{grupo_vacio.id}/"
+                "saldos-cierre/"
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["mensaje"],
+            (
+                "La actividad cerró sin gastos, pagos "
+                "ni saldos pendientes."
+            ),
+        )
+
+        self.assertEqual(
+            response.data["resumen"]["total_saldos"],
+            0,
+        )
+
+        self.assertEqual(
+            response.data["resumen"]["total_deudas"],
+            0,
+        )
+
+        self.assertEqual(
+            response.data["resumen"]["total_pendiente"],
+            "0.00",
+        )
+
+        self.assertEqual(
+            response.data["saldos"],
+            [],
+        )
+
+        self.assertEqual(
+            response.data["deudas"],
+            [],
+        )
+
+    def test_snapshots_permanecen_tras_cambiar_datos_personales(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        self.fernando.username = "fernando_modificado_sc58"
+        self.fernando.save(
+            update_fields=["username"]
+        )
+
+        self.grupo.nombre = "Actividad renombrada SC-58"
+        self.grupo.save(
+            update_fields=["nombre"]
+        )
+
+        saldo = ClosingBalance.objects.get(
+            grupo=self.grupo,
+            participante=self.fernando,
+        )
+
+        deuda = Debt.objects.get(
+            grupo=self.grupo,
+            participante=self.fernando,
+        )
+
+        self.assertEqual(
+            saldo.participante_username,
+            "fernando_sc58",
+        )
+
+        self.assertEqual(
+            saldo.grupo_nombre,
+            "Actividad económica SC-58",
+        )
+
+        self.assertEqual(
+            deuda.participante_username,
+            "fernando_sc58",
+        )
+
+        self.assertEqual(
+            deuda.grupo_nombre,
+            "Actividad económica SC-58",
+        )
+
+        response = self.client.get(
+            self.url
+        )
+
+        saldo_response = next(
+            item
+            for item in response.data["saldos"]
+            if item["participante_id"] == self.fernando.id
+        )
+
+        self.assertEqual(
+            saldo_response["participante_username"],
+            "fernando_sc58",
+        )
+
+        self.assertEqual(
+            saldo_response["grupo_nombre"],
+            "Actividad económica SC-58",
+        )
+
+    def test_saldos_no_cambian_si_se_modifican_datos_origen(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        saldo_original = ClosingBalance.objects.get(
+            grupo=self.grupo,
+            participante=self.fernando,
+        )
+
+        valores_originales = (
+            saldo_original.cuota_total,
+            saldo_original.total_pagado,
+            saldo_original.saldo_pendiente,
+        )
+
+        ExpenseDivision.objects.filter(
+            gasto__grupo=self.grupo,
+            participante=self.fernando,
+        ).update(
+            monto_asignado=Decimal("99.99")
+        )
+
+        Payment.objects.filter(
+            grupo=self.grupo,
+            pagador=self.fernando,
+        ).update(
+            monto=Decimal("1.00")
+        )
+
+        saldo_original.refresh_from_db()
+
+        self.assertEqual(
+            (
+                saldo_original.cuota_total,
+                saldo_original.total_pagado,
+                saldo_original.saldo_pendiente,
+            ),
+            valores_originales,
+        )
+
+    def test_fallo_del_calculo_revierte_todo_el_cierre(
+        self,
+    ):
+        with patch(
+            "expenses.models.Debt.objects.create",
+            side_effect=RuntimeError(
+                "Fallo simulado al crear una deuda"
+            ),
+        ):
+            with self.assertRaises(RuntimeError):
+                self.grupo.cerrar_automaticamente(
+                    momento=self.momento_base
+                )
+
+        self.grupo.refresh_from_db()
+
+        self.assertIsNone(
+            self.grupo.fecha_cierre_automatico
+        )
+
+        self.assertIsNone(
+            self.grupo.fecha_generacion_saldos
+        )
+
+        self.assertEqual(
+            ClosingBalance.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            0,
+        )
+
+        self.assertEqual(
+            Debt.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            0,
+        )
+
+        self.assertEqual(
+            ActivityHistory.objects.filter(
+                grupo=self.grupo,
+                tipo_accion=(
+                    ActivityHistory
+                    .TIPO_ACTIVIDAD_CERRADA_AUTOMATICAMENTE
+                ),
+            ).count(),
+            0,
+        )
+
+    def test_no_permite_generar_saldos_sin_cierre_persistente(
+        self,
+    ):
+        with self.assertRaises(ValidationError):
+            self.grupo.generar_saldos_cierre(
+                momento=self.momento_base
+            )
+
+        self.assertEqual(
+            ClosingBalance.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            0,
+        )
+
+        self.assertEqual(
+            Debt.objects.filter(
+                grupo=self.grupo
+            ).count(),
+            0,
+        )
+
+    def test_endpoint_controla_estado_y_procesamiento_del_cierre(
+        self,
+    ):
+        grupo_activo = Group.objects.create(
+            nombre="Actividad activa consulta SC-58",
+            descripcion="Aún no ha terminado",
+            creador=self.fernando,
+            fecha_inicio=(
+                self.momento_base
+                - timedelta(hours=1)
+            ),
+            fecha_fin=(
+                self.momento_base
+                + timedelta(hours=1)
+            ),
+        )
+
+        grupo_activo.participantes.add(
+            self.fernando
+        )
+
+        GroupMembership.objects.create(
+            grupo=grupo_activo,
+            usuario=self.fernando,
+        )
+
+        respuesta_activa = self.client.get(
+            (
+                f"/api/grupos/{grupo_activo.id}/"
+                "saldos-cierre/"
+            )
+        )
+
+        respuesta_no_procesada = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            respuesta_activa.status_code,
+            status.HTTP_400_BAD_REQUEST,
+        )
+
+        self.assertEqual(
+            respuesta_no_procesada.status_code,
+            status.HTTP_409_CONFLICT,
+        )
+
+    def test_participante_activo_consulta_y_externo_no_accede(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+        respuesta_participante = self.client.get(
+            self.url
+        )
+
+        self.client.force_authenticate(
+            user=self.externo
+        )
+
+        respuesta_externo = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            respuesta_participante.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            respuesta_externo.status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_endpoint_saldos_es_solo_lectura(
+        self,
+    ):
+        self.cerrar_actividad()
+
+        respuestas = [
+            self.client.post(
+                self.url,
+                {},
+                format="json",
+            ),
+            self.client.patch(
+                self.url,
+                {
+                    "saldo_pendiente": "0.00",
+                },
+                format="json",
+            ),
+            self.client.delete(
+                self.url
+            ),
+        ]
+
+        for response in respuestas:
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_405_METHOD_NOT_ALLOWED,
+            )
 
