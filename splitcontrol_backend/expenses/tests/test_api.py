@@ -2827,3 +2827,486 @@ class EditarEliminarGastoSC49Test(APITestCase):
                 id=self.gasto_cerrado.id
             ).exists()
         )
+
+
+class ResumenEconomicoCuotasSC50Test(APITestCase):
+
+    def setUp(self):
+        self.carlita = User.objects.create_user(
+            username="carlita_sc50",
+            email="carlita_sc50@example.com",
+            password="Prueba123",
+        )
+
+        self.andres = User.objects.create_user(
+            username="andres_sc50",
+            email="andres_sc50@example.com",
+            password="Prueba123",
+        )
+
+        self.damarys = User.objects.create_user(
+            username="damarys_sc50",
+            email="damarys_sc50@example.com",
+            password="Prueba123",
+        )
+
+        self.usuario_externo = User.objects.create_user(
+            username="externo_sc50",
+            email="externo_sc50@example.com",
+            password="Prueba123",
+        )
+
+        ahora = timezone.now()
+
+        self.grupo = Group.objects.create(
+            nombre="Actividad económica SC-50",
+            descripcion="Resumen de gastos y cuotas",
+            creador=self.carlita,
+            fecha_inicio=ahora - timedelta(days=1),
+            fecha_fin=ahora + timedelta(days=1),
+        )
+
+        self.grupo.participantes.add(
+            self.carlita,
+            self.andres,
+            self.damarys,
+        )
+
+        self.membresia_carlita = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.carlita,
+        )
+
+        self.membresia_andres = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.andres,
+        )
+
+        self.membresia_damarys = GroupMembership.objects.create(
+            grupo=self.grupo,
+            usuario=self.damarys,
+        )
+
+        self.gasto_uno = Expense.objects.create(
+            grupo=self.grupo,
+            descripcion="Hospedaje",
+            monto=Decimal("60.00"),
+            fecha_gasto="2026-07-20",
+            registrado_por=self.carlita,
+        )
+        self.gasto_uno.sincronizar_integrantes_activos()
+
+        self.membresia_damarys.retirar()
+        self.grupo.participantes.remove(
+            self.damarys
+        )
+
+        self.gasto_dos = Expense.objects.create(
+            grupo=self.grupo,
+            descripcion="Transporte",
+            monto=Decimal("30.00"),
+            fecha_gasto="2026-07-21",
+            registrado_por=self.andres,
+        )
+        self.gasto_dos.sincronizar_integrantes_activos()
+
+        Payment.objects.create(
+            grupo=self.grupo,
+            pagador=self.carlita,
+            receptor=self.andres,
+            monto=Decimal("10.00"),
+            fecha_pago="2026-07-22",
+            registrado_por=self.carlita,
+        )
+
+        self.url = (
+            f"/api/grupos/{self.grupo.id}/"
+            "resumen-economico/"
+        )
+
+        self.client.force_authenticate(
+            user=self.carlita
+        )
+
+    def obtener_cuotas_por_usuario(self, response):
+        return {
+            cuota["participante"]["username"]: cuota
+            for cuota in response.data["cuotas"]
+        }
+
+    def test_creador_consulta_resumen_economico_completo(self):
+        response = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["grupo_id"],
+            self.grupo.id,
+        )
+
+        self.assertEqual(
+            response.data["grupo_nombre"],
+            "Actividad económica SC-50",
+        )
+
+        self.assertEqual(
+            response.data["estado_actividad"],
+            Group.ESTADO_ACTIVA,
+        )
+
+        resumen = response.data["resumen"]
+
+        self.assertEqual(
+            Decimal(resumen["total_gastos"]),
+            Decimal("90.00"),
+        )
+
+        self.assertEqual(
+            resumen["cantidad_gastos"],
+            2,
+        )
+
+        self.assertEqual(
+            Decimal(resumen["total_cuotas"]),
+            Decimal("90.00"),
+        )
+
+        self.assertEqual(
+            Decimal(resumen["total_aportado"]),
+            Decimal("10.00"),
+        )
+
+        self.assertEqual(
+            Decimal(resumen["total_pendiente"]),
+            Decimal("80.00"),
+        )
+
+        self.assertEqual(
+            response.data["total_participantes"],
+            3,
+        )
+
+    def test_muestra_cuotas_individuales_y_saldos_pendientes(self):
+        response = self.client.get(
+            self.url
+        )
+
+        cuotas = self.obtener_cuotas_por_usuario(
+            response
+        )
+
+        self.assertEqual(
+            Decimal(
+                cuotas["carlita_sc50"]["cuota_total"]
+            ),
+            Decimal("35.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                cuotas["carlita_sc50"]["total_aportado"]
+            ),
+            Decimal("10.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                cuotas["carlita_sc50"]["saldo_pendiente"]
+            ),
+            Decimal("25.00"),
+        )
+
+        self.assertEqual(
+            cuotas["carlita_sc50"]["estado"],
+            "pendiente",
+        )
+
+        self.assertEqual(
+            Decimal(
+                cuotas["andres_sc50"]["cuota_total"]
+            ),
+            Decimal("35.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                cuotas["andres_sc50"]["total_aportado"]
+            ),
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                cuotas["andres_sc50"]["saldo_pendiente"]
+            ),
+            Decimal("35.00"),
+        )
+
+    def test_participante_retirado_conserva_cuota_historica(self):
+        response = self.client.get(
+            self.url
+        )
+
+        cuotas = self.obtener_cuotas_por_usuario(
+            response
+        )
+
+        cuota_damarys = cuotas[
+            "damarys_sc50"
+        ]
+
+        self.assertFalse(
+            cuota_damarys["activo"]
+        )
+
+        self.assertEqual(
+            Decimal(
+                cuota_damarys["cuota_total"]
+            ),
+            Decimal("20.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                cuota_damarys["total_aportado"]
+            ),
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                cuota_damarys["saldo_pendiente"]
+            ),
+            Decimal("20.00"),
+        )
+
+        self.assertEqual(
+            cuota_damarys["estado"],
+            "pendiente",
+        )
+
+    def test_suma_de_cuotas_coincide_con_total_de_gastos(self):
+        response = self.client.get(
+            self.url
+        )
+
+        total_cuotas_individuales = sum(
+            (
+                Decimal(
+                    cuota["cuota_total"]
+                )
+                for cuota in response.data["cuotas"]
+            ),
+            Decimal("0.00"),
+        )
+
+        self.assertEqual(
+            total_cuotas_individuales,
+            Decimal("90.00"),
+        )
+
+        self.assertEqual(
+            total_cuotas_individuales,
+            Decimal(
+                response.data["resumen"]["total_gastos"]
+            ),
+        )
+
+        for cuota in response.data["cuotas"]:
+            self.assertRegex(
+                cuota["cuota_total"],
+                r"^\d+\.\d{2}$",
+            )
+
+            self.assertRegex(
+                cuota["total_aportado"],
+                r"^\d+\.\d{2}$",
+            )
+
+            self.assertRegex(
+                cuota["saldo_pendiente"],
+                r"^\d+\.\d{2}$",
+            )
+
+    def test_participante_activo_puede_consultar_resumen(self):
+        self.client.force_authenticate(
+            user=self.andres
+        )
+
+        response = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+    def test_retirado_y_externo_no_pueden_consultar_resumen(self):
+        for usuario in [
+            self.damarys,
+            self.usuario_externo,
+        ]:
+            self.client.force_authenticate(
+                user=usuario
+            )
+
+            response = self.client.get(
+                self.url
+            )
+
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_404_NOT_FOUND,
+            )
+
+    def test_resumen_se_actualiza_al_editar_y_eliminar_gastos(self):
+        response_editar = self.client.patch(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"gastos/{self.gasto_dos.id}/"
+            ),
+            {
+                "monto": "40.00",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response_editar.status_code,
+            status.HTTP_200_OK,
+        )
+
+        resumen_editado = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            Decimal(
+                resumen_editado.data[
+                    "resumen"
+                ]["total_gastos"]
+            ),
+            Decimal("100.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                resumen_editado.data[
+                    "resumen"
+                ]["total_cuotas"]
+            ),
+            Decimal("100.00"),
+        )
+
+        response_eliminar = self.client.delete(
+            (
+                f"/api/grupos/{self.grupo.id}/"
+                f"gastos/{self.gasto_dos.id}/"
+            )
+        )
+
+        self.assertEqual(
+            response_eliminar.status_code,
+            status.HTTP_200_OK,
+        )
+
+        resumen_eliminado = self.client.get(
+            self.url
+        )
+
+        self.assertEqual(
+            Decimal(
+                resumen_eliminado.data[
+                    "resumen"
+                ]["total_gastos"]
+            ),
+            Decimal("60.00"),
+        )
+
+        self.assertEqual(
+            resumen_eliminado.data[
+                "resumen"
+            ]["cantidad_gastos"],
+            1,
+        )
+
+        self.assertEqual(
+            Decimal(
+                resumen_eliminado.data[
+                    "resumen"
+                ]["total_cuotas"]
+            ),
+            Decimal("60.00"),
+        )
+
+    def test_actividad_cerrada_conserva_resumen_historico(self):
+        ahora = timezone.now()
+
+        grupo_cerrado = Group.objects.create(
+            nombre="Actividad cerrada SC-50",
+            descripcion="Resumen histórico disponible",
+            creador=self.carlita,
+            fecha_inicio=ahora - timedelta(days=3),
+            fecha_fin=ahora - timedelta(days=1),
+        )
+
+        grupo_cerrado.participantes.add(
+            self.carlita,
+            self.andres,
+        )
+
+        GroupMembership.objects.create(
+            grupo=grupo_cerrado,
+            usuario=self.carlita,
+        )
+
+        GroupMembership.objects.create(
+            grupo=grupo_cerrado,
+            usuario=self.andres,
+        )
+
+        gasto_cerrado = Expense.objects.create(
+            grupo=grupo_cerrado,
+            descripcion="Gasto final",
+            monto=Decimal("20.00"),
+            fecha_gasto="2026-07-18",
+            registrado_por=self.carlita,
+        )
+        gasto_cerrado.sincronizar_integrantes_activos()
+
+        response = self.client.get(
+            (
+                f"/api/grupos/{grupo_cerrado.id}/"
+                "resumen-economico/"
+            )
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+        )
+
+        self.assertEqual(
+            response.data["estado_actividad"],
+            Group.ESTADO_CERRADA,
+        )
+
+        self.assertEqual(
+            Decimal(
+                response.data["resumen"]["total_gastos"]
+            ),
+            Decimal("20.00"),
+        )
+
+        self.assertEqual(
+            Decimal(
+                response.data["resumen"]["total_cuotas"]
+            ),
+            Decimal("20.00"),
+        )

@@ -1,8 +1,14 @@
 from decimal import Decimal
 
+from django.contrib.auth.models import User
 from django.db.models import Sum
 
-from .models import ExpenseDivision, Payment
+from .models import (
+    Expense,
+    ExpenseDivision,
+    GroupMembership,
+    Payment,
+)
 
 
 CERO = Decimal("0.00")
@@ -150,3 +156,151 @@ def calcular_deudas_grupo(grupo):
             indice_acreedor += 1
 
     return deudas
+
+
+def calcular_resumen_economico_grupo(grupo):
+    gastos = Expense.objects.filter(
+        grupo=grupo
+    )
+
+    total_gastos = (
+        gastos.aggregate(
+            total=Sum("monto")
+        )["total"]
+        or CERO
+    ).quantize(DOS_DECIMALES)
+
+    cantidad_gastos = gastos.count()
+
+    cuotas_agrupadas = (
+        ExpenseDivision.objects
+        .filter(gasto__grupo=grupo)
+        .values("participante_id")
+        .annotate(total=Sum("monto_asignado"))
+    )
+
+    aportes_agrupados = (
+        Payment.objects
+        .filter(grupo=grupo)
+        .values("pagador_id")
+        .annotate(total=Sum("monto"))
+    )
+
+    cuota_por_participante = {
+        item["participante_id"]: (
+            item["total"] or CERO
+        ).quantize(DOS_DECIMALES)
+        for item in cuotas_agrupadas
+    }
+
+    aporte_por_participante = {
+        item["pagador_id"]: (
+            item["total"] or CERO
+        ).quantize(DOS_DECIMALES)
+        for item in aportes_agrupados
+    }
+
+    participantes_ids = set(
+        grupo.participantes.values_list(
+            "id",
+            flat=True,
+        )
+    )
+
+    participantes_ids.update(
+        cuota_por_participante.keys()
+    )
+
+    participantes_ids.update(
+        aporte_por_participante.keys()
+    )
+
+    participantes_ids.update(
+        Payment.objects
+        .filter(grupo=grupo)
+        .values_list(
+            "receptor_id",
+            flat=True,
+        )
+    )
+
+    participantes_activos_ids = set(
+        GroupMembership.objects
+        .filter(
+            grupo=grupo,
+            activo=True,
+        )
+        .values_list(
+            "usuario_id",
+            flat=True,
+        )
+    )
+
+    participantes_activos_ids.update(
+        grupo.participantes.values_list(
+            "id",
+            flat=True,
+        )
+    )
+
+    participantes = (
+        User.objects
+        .filter(id__in=participantes_ids)
+        .order_by("id")
+    )
+
+    cuotas = []
+    total_cuotas = CERO
+    total_aportado = CERO
+    total_pendiente = CERO
+
+    for participante in participantes:
+        cuota_total = cuota_por_participante.get(
+            participante.id,
+            CERO,
+        ).quantize(DOS_DECIMALES)
+
+        aporte_total = aporte_por_participante.get(
+            participante.id,
+            CERO,
+        ).quantize(DOS_DECIMALES)
+
+        saldo_pendiente = max(
+            cuota_total - aporte_total,
+            CERO,
+        ).quantize(DOS_DECIMALES)
+
+        total_cuotas += cuota_total
+        total_aportado += aporte_total
+        total_pendiente += saldo_pendiente
+
+        cuotas.append({
+            "participante": participante,
+            "activo": (
+                participante.id
+                in participantes_activos_ids
+            ),
+            "cuota_total": cuota_total,
+            "total_aportado": aporte_total,
+            "saldo_pendiente": saldo_pendiente,
+            "estado": (
+                "saldado"
+                if saldo_pendiente == CERO
+                else "pendiente"
+            ),
+        })
+
+    return {
+        "total_gastos": total_gastos,
+        "cantidad_gastos": cantidad_gastos,
+        "total_cuotas": total_cuotas.quantize(
+            DOS_DECIMALES
+        ),
+        "total_aportado": total_aportado.quantize(
+            DOS_DECIMALES
+        ),
+        "total_pendiente": total_pendiente.quantize(
+            DOS_DECIMALES
+        ),
+        "cuotas": cuotas,
+    }
