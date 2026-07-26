@@ -72,6 +72,50 @@ def grupo_esta_activo(grupo):
     return grupo.estado == Group.ESTADO_ACTIVA
 
 
+def crear_notificaciones_nuevo_gasto(
+    gasto,
+    usuario_registro,
+):
+    destinatarios_ids = (
+        GroupMembership.objects
+        .filter(
+            grupo=gasto.grupo,
+            activo=True,
+        )
+        .exclude(
+            usuario=usuario_registro,
+        )
+        .values_list(
+            "usuario_id",
+            flat=True,
+        )
+        .distinct()
+    )
+
+    notificaciones = [
+        Notification(
+            usuario_id=usuario_id,
+            titulo=(
+                f"Nuevo gasto en {gasto.grupo.nombre}"
+            ),
+            mensaje=(
+                f"{usuario_registro.username} registró "
+                f'el gasto "{gasto.descripcion}" por '
+                f"${gasto.monto:.2f}."
+            ),
+            enlace=f"/grupos/{gasto.grupo_id}",
+        )
+        for usuario_id in destinatarios_ids
+    ]
+
+    if notificaciones:
+        Notification.objects.bulk_create(
+            notificaciones
+        )
+
+    return len(notificaciones)
+
+
 class GroupListCreateView(generics.ListCreateAPIView):
     serializer_class = GroupSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -473,10 +517,18 @@ class ExpenseCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        gasto = serializer.save(
-            grupo=grupo,
-            registrado_por=request.user,
-        )
+        with transaction.atomic():
+            gasto = serializer.save(
+                grupo=grupo,
+                registrado_por=request.user,
+            )
+
+            notificaciones_generadas = (
+                crear_notificaciones_nuevo_gasto(
+                    gasto,
+                    request.user,
+                )
+            )
 
         gasto_actualizado = (
             Expense.objects
@@ -498,6 +550,9 @@ class ExpenseCreateView(APIView):
                 ),
                 "total_gastos": (
                     f"{grupo.total_gastos:.2f}"
+                ),
+                "notificaciones_generadas": (
+                    notificaciones_generadas
                 ),
                 "gasto": ExpenseSerializer(
                     gasto_actualizado
