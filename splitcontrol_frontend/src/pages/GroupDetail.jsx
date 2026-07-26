@@ -214,6 +214,18 @@ function GroupDetail() {
   const [guardando, setGuardando] = useState(false);
   const [modoEdicion, setModoEdicion] = useState(false);
   const [agregandoParticipante, setAgregandoParticipante] = useState(false);
+  const [
+    consultandoAdvertenciaDeudas,
+    setConsultandoAdvertenciaDeudas,
+  ] = useState(false);
+  const [advertenciaDeudas, setAdvertenciaDeudas] =
+    useState(null);
+  const [errorAdvertenciaDeudas, setErrorAdvertenciaDeudas] =
+    useState("");
+  const [
+    modalAdvertenciaDeudasAbierto,
+    setModalAdvertenciaDeudasAbierto,
+  ] = useState(false);
   const [mensaje, setMensaje] = useState("");
   const [error, setError] = useState("");
 
@@ -232,6 +244,12 @@ function GroupDetail() {
     username.charAt(0).toUpperCase() + username.slice(1);
   const avatarLetter = username.charAt(0).toUpperCase();
   const esCreador = grupo?.creador_username === username;
+  const esResponsableDeudas =
+    grupo?.responsable_deudas?.username === username;
+  const usuarioSeleccionadoDetalle = usuarios.find(
+    (usuario) =>
+      String(usuario.id) === String(usuarioSeleccionado)
+  );
   const actividadProgramada = grupo?.estado === "programada";
   const actividadActiva = grupo?.estado === "activa";
   const actividadCerrada = grupo?.estado === "cerrada";
@@ -1560,7 +1578,91 @@ function GroupDetail() {
     );
   };
 
-  const agregarParticipante = async () => {
+  const cerrarModalAdvertenciaDeudas = () => {
+    if (agregandoParticipante) {
+      return;
+    }
+
+    setModalAdvertenciaDeudasAbierto(false);
+  };
+
+  const limpiarAdvertenciaDeudas = () => {
+    setAdvertenciaDeudas(null);
+    setErrorAdvertenciaDeudas("");
+    setModalAdvertenciaDeudasAbierto(false);
+  };
+
+  const consultarAdvertenciaDeudas = async (usuarioId) => {
+    limpiarAdvertenciaDeudas();
+
+    if (!usuarioId) {
+      return;
+    }
+
+    const token = localStorage.getItem("access");
+
+    if (!token) {
+      setErrorAdvertenciaDeudas(
+        "Tu sesión ha expirado. Inicia sesión nuevamente."
+      );
+      return;
+    }
+
+    try {
+      setConsultandoAdvertenciaDeudas(true);
+
+      const response = await fetch(
+        `http://127.0.0.1:8000/api/grupos/${id}/participantes/${usuarioId}/advertencia-deudas/`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          obtenerMensajeError(
+            data,
+            "No se pudo consultar la advertencia de deudas."
+          )
+        );
+      }
+
+      setAdvertenciaDeudas(data);
+    } catch (errorAdvertencia) {
+      setAdvertenciaDeudas(null);
+      setErrorAdvertenciaDeudas(
+        errorAdvertencia.message ||
+          "No se pudo consultar la advertencia de deudas."
+      );
+    } finally {
+      setConsultandoAdvertenciaDeudas(false);
+    }
+  };
+
+  const seleccionarUsuarioParaAgregar = async (e) => {
+    const usuarioId = e.target.value;
+
+    setUsuarioSeleccionado(usuarioId);
+    setMensaje("");
+    setError("");
+
+    await consultarAdvertenciaDeudas(usuarioId);
+  };
+
+  const ejecutarIncorporacionParticipante = async (
+    confirmarDeudas = false
+  ) => {
     setMensaje("");
     setError("");
 
@@ -1588,16 +1690,37 @@ function GroupDetail() {
             Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
-            usuario_id: usuarioSeleccionado,
+            usuario_id: Number(usuarioSeleccionado),
+            confirmar_deudas: confirmarDeudas,
           }),
         }
       );
 
-      const data = await response.json();
+      let data = {};
+
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+
+      if (
+        response.status === 409 &&
+        data.requiere_confirmacion
+      ) {
+        setAdvertenciaDeudas(
+          data.advertencia || advertenciaDeudas
+        );
+        setModalAdvertenciaDeudasAbierto(true);
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(
-          data.error || "No se pudo agregar el participante."
+          obtenerMensajeError(
+            data,
+            "No se pudo agregar el participante."
+          )
         );
       }
 
@@ -1606,6 +1729,7 @@ function GroupDetail() {
         data.grupo?.total_gastos || totalGastos
       );
       setUsuarioSeleccionado("");
+      limpiarAdvertenciaDeudas();
       setMensaje(
         data.mensaje || "Participante agregado correctamente."
       );
@@ -1623,6 +1747,24 @@ function GroupDetail() {
     } finally {
       setAgregandoParticipante(false);
     }
+  };
+
+  const agregarParticipante = async () => {
+    if (!usuarioSeleccionado) {
+      setError("Selecciona un usuario para agregarlo al grupo.");
+      return;
+    }
+
+    if (advertenciaDeudas?.requiere_confirmacion) {
+      setModalAdvertenciaDeudasAbierto(true);
+      return;
+    }
+
+    await ejecutarIncorporacionParticipante(false);
+  };
+
+  const confirmarIncorporacionConDeudas = async () => {
+    await ejecutarIncorporacionParticipante(true);
   };
 
   const eliminarParticipante = async (participanteId) => {
@@ -1729,6 +1871,20 @@ function GroupDetail() {
               👥 Grupos
             </button>
 
+            <button
+              className="sidebar-link"
+              onClick={() => navigate("/mis-deudas")}
+            >
+              💳 Mis deudas
+            </button>
+
+            <button
+              className="sidebar-link"
+              onClick={() => navigate("/notificaciones")}
+            >
+              🔔 Notificaciones
+            </button>
+
             <button className="sidebar-link">
               ↺ Historial
             </button>
@@ -1831,6 +1987,20 @@ function GroupDetail() {
                     ? "Creador"
                     : "Participante"}
                 </span>
+
+                {esResponsableDeudas && (
+                  <button
+                    type="button"
+                    className="btn btn-outline-primary btn-sm"
+                    onClick={() =>
+                      navigate(
+                        `/grupos/${id}/solicitudes-deuda`
+                      )
+                    }
+                  >
+                    Revisar solicitudes de deuda
+                  </button>
+                )}
               </div>
 
               <p className="mt-2">
@@ -2322,10 +2492,12 @@ function GroupDetail() {
                             <select
                               className="form-control"
                               value={usuarioSeleccionado}
-                              onChange={(e) =>
-                                setUsuarioSeleccionado(
-                                  e.target.value
-                                )
+                              onChange={
+                                seleccionarUsuarioParaAgregar
+                              }
+                              disabled={
+                                agregandoParticipante ||
+                                consultandoAdvertenciaDeudas
                               }
                             >
                               <option value="">
@@ -2356,13 +2528,95 @@ function GroupDetail() {
                               type="button"
                               className="btn btn-primary"
                               onClick={agregarParticipante}
-                              disabled={agregandoParticipante}
+                              disabled={
+                                agregandoParticipante ||
+                                consultandoAdvertenciaDeudas ||
+                                !usuarioSeleccionado
+                              }
                             >
                               {agregandoParticipante
                                 ? "Agregando..."
-                                : "Agregar"}
+                                : consultandoAdvertenciaDeudas
+                                  ? "Consultando..."
+                                  : "Agregar"}
                             </button>
                           </div>
+
+                          {consultandoAdvertenciaDeudas && (
+                            <div
+                              className="alert alert-light border mt-3 mb-0"
+                              role="status"
+                            >
+                              Consultando obligaciones pendientes
+                              del usuario seleccionado...
+                            </div>
+                          )}
+
+                          {errorAdvertenciaDeudas && (
+                            <div
+                              className="alert alert-danger mt-3 mb-0"
+                              role="alert"
+                            >
+                              {errorAdvertenciaDeudas}
+                            </div>
+                          )}
+
+                          {!consultandoAdvertenciaDeudas &&
+                            advertenciaDeudas &&
+                            advertenciaDeudas
+                              .tiene_deudas_pendientes && (
+                              <div
+                                className="alert alert-warning mt-3 mb-0"
+                                role="alert"
+                              >
+                                <strong>
+                                  Advertencia de obligaciones
+                                  pendientes
+                                </strong>
+
+                                <p className="mb-2 mt-2">
+                                  {advertenciaDeudas.mensaje}
+                                </p>
+
+                                <div className="d-flex flex-wrap gap-2">
+                                  <span className="badge bg-warning text-dark border">
+                                    Deudas:{" "}
+                                    {
+                                      advertenciaDeudas
+                                        .cantidad_deudas_pendientes
+                                    }
+                                  </span>
+
+                                  <span className="badge bg-warning text-dark border">
+                                    Total:{" "}
+                                    {formatearMonto(
+                                      advertenciaDeudas
+                                        .monto_total_pendiente
+                                    )}
+                                  </span>
+                                </div>
+
+                                <small className="d-block mt-2">
+                                  El usuario no será agregado hasta
+                                  que confirmes expresamente la
+                                  incorporación.
+                                </small>
+                              </div>
+                            )}
+
+                          {!consultandoAdvertenciaDeudas &&
+                            advertenciaDeudas &&
+                            !advertenciaDeudas
+                              .tiene_deudas_pendientes && (
+                              <div
+                                className="alert alert-success mt-3 mb-0"
+                                role="status"
+                              >
+                                El usuario seleccionado no mantiene
+                                obligaciones pendientes. Puede
+                                agregarse mediante el flujo normal.
+                              </div>
+                            )}
                         </div>
                       )}
 
@@ -3658,6 +3912,151 @@ function GroupDetail() {
           </>
         )}
       </main>
+
+      {modalAdvertenciaDeudasAbierto &&
+        advertenciaDeudas && (
+          <div
+            className="position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center p-3"
+            style={{
+              backgroundColor: "rgba(0, 0, 0, 0.58)",
+              zIndex: 1090,
+            }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirmar participante con deudas"
+            onClick={cerrarModalAdvertenciaDeudas}
+          >
+            <div
+              className="bg-white rounded shadow-lg w-100"
+              style={{
+                maxWidth: "620px",
+                maxHeight: "90vh",
+                overflowY: "auto",
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="d-flex justify-content-between align-items-start border-bottom p-4">
+                <div>
+                  <span className="badge bg-warning text-dark mb-2">
+                    Confirmación requerida
+                  </span>
+
+                  <h4 className="mb-1">
+                    El usuario tiene deudas pendientes
+                  </h4>
+
+                  <small className="text-muted">
+                    Revisa la advertencia antes de continuar.
+                  </small>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Cerrar"
+                  onClick={cerrarModalAdvertenciaDeudas}
+                  disabled={agregandoParticipante}
+                />
+              </div>
+
+              <div className="p-4">
+                <div className="border rounded p-3 bg-light">
+                  <small className="text-muted d-block">
+                    Usuario seleccionado
+                  </small>
+
+                  <strong>
+                    {usuarioSeleccionadoDetalle
+                      ?.nombre_completo ||
+                      usuarioSeleccionadoDetalle?.username ||
+                      advertenciaDeudas.usuario?.username ||
+                      "Usuario"}
+                  </strong>
+
+                  {(usuarioSeleccionadoDetalle?.username ||
+                    advertenciaDeudas.usuario?.username) && (
+                    <small className="text-muted d-block">
+                      @
+                      {usuarioSeleccionadoDetalle?.username ||
+                        advertenciaDeudas.usuario?.username}
+                    </small>
+                  )}
+                </div>
+
+                <div className="row g-3 mt-1">
+                  <div className="col-md-6">
+                    <div className="border rounded p-3 h-100">
+                      <small className="text-muted d-block">
+                        Obligaciones pendientes
+                      </small>
+
+                      <strong className="fs-4">
+                        {
+                          advertenciaDeudas
+                            .cantidad_deudas_pendientes
+                        }
+                      </strong>
+                    </div>
+                  </div>
+
+                  <div className="col-md-6">
+                    <div className="border rounded p-3 h-100">
+                      <small className="text-muted d-block">
+                        Monto total pendiente
+                      </small>
+
+                      <strong className="fs-4">
+                        {formatearMonto(
+                          advertenciaDeudas
+                            .monto_total_pendiente
+                        )}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  className="alert alert-warning mt-3 mb-0"
+                  role="alert"
+                >
+                  {advertenciaDeudas.mensaje}
+                </div>
+
+                <div
+                  className="alert alert-light border mt-3 mb-0"
+                  role="alert"
+                >
+                  Esta advertencia es informativa. Puedes cancelar
+                  sin crear ninguna membresía o agregar al usuario
+                  de todas formas. El servidor volverá a comprobar
+                  sus deudas al confirmar.
+                </div>
+              </div>
+
+              <div className="d-flex justify-content-end gap-2 border-top p-4">
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary"
+                  onClick={cerrarModalAdvertenciaDeudas}
+                  disabled={agregandoParticipante}
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-warning"
+                  onClick={confirmarIncorporacionConDeudas}
+                  disabled={agregandoParticipante}
+                >
+                  {agregandoParticipante
+                    ? "Confirmando..."
+                    : "Agregar de todas formas"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       {esCreador &&
         !actividadCerrada &&
