@@ -2256,10 +2256,13 @@ class DebtResolutionRequest(models.Model):
                 ),
             )
         ],
+        blank=True,
     )
 
     evidencia_nombre_original = models.CharField(
         max_length=255,
+        blank=True,
+        default="",
     )
 
     estado = models.CharField(
@@ -2449,7 +2452,7 @@ class DebtResolutionRequest(models.Model):
         deuda,
         solicitante,
         descripcion,
-        evidencia,
+        evidencia=None,
         momento=None,
     ):
         momento = momento or timezone.now()
@@ -2509,13 +2512,6 @@ class DebtResolutionRequest(models.Model):
                 "descripcion": (
                     "La descripción o explicación "
                     "es obligatoria."
-                )
-            })
-
-        if not evidencia:
-            raise ValidationError({
-                "evidencia": (
-                    "Debes adjuntar una evidencia."
                 )
             })
 

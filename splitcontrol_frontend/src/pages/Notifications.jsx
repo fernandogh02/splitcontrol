@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import logo from "../assets/splitcontrol-logo.png";
+import {
+  authFetch,
+  limpiarSesion,
+} from "../utils/authFetch";
 import "../Notifications.css";
 
 const API_NOTIFICACIONES =
@@ -108,27 +112,14 @@ function Notifications() {
   ).length;
 
   const obtenerNotificaciones = useCallback(async () => {
-    const token = localStorage.getItem("access");
-
-    if (!token) {
-      setError(
-        "Tu sesión ha expirado. Inicia sesión nuevamente."
-      );
-      setCargando(false);
-      return;
-    }
-
     try {
       setCargando(true);
       setError("");
 
-      const response = await fetch(
+      const response = await authFetch(
         API_NOTIFICACIONES,
         {
           method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
         }
       );
 
@@ -188,26 +179,16 @@ function Notifications() {
       return true;
     }
 
-    const token = localStorage.getItem("access");
-
-    if (!token) {
-      setError(
-        "Tu sesión ha expirado. Inicia sesión nuevamente."
-      );
-      return false;
-    }
-
     try {
       setNotificacionActualizando(notificacion.id);
       setError("");
 
-      const response = await fetch(
+      const response = await authFetch(
         `${API_NOTIFICACIONES}${notificacion.id}/leer/`,
         {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({}),
         }
@@ -258,26 +239,16 @@ function Notifications() {
   };
 
   const marcarTodasComoLeidas = async () => {
-    const token = localStorage.getItem("access");
-
-    if (!token) {
-      setError(
-        "Tu sesión ha expirado. Inicia sesión nuevamente."
-      );
-      return;
-    }
-
     try {
       setMarcandoTodas(true);
       setError("");
 
-      const response = await fetch(
+      const response = await authFetch(
         `${API_NOTIFICACIONES}marcar-todas-leidas/`,
         {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({}),
         }
@@ -333,13 +304,13 @@ function Notifications() {
       return;
     }
 
-    window.location.assign(notificacion.enlace);
+    setError(
+      "El enlace de esta notificación no es una ruta interna válida."
+    );
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("access");
-    localStorage.removeItem("refresh");
-    localStorage.removeItem("username");
+    limpiarSesion();
     navigate("/login");
   };
 
@@ -513,6 +484,19 @@ function Notifications() {
               <h4>Cargando notificaciones...</h4>
               <p>
                 Estamos consultando tus novedades más recientes.
+              </p>
+            </div>
+          ) : error ? (
+            <div className="notifications-empty">
+              <div className="notifications-empty-icon">
+                ⚠
+              </div>
+
+              <h4>No fue posible cargar las notificaciones</h4>
+
+              <p>
+                Corrige el problema de sesión o conexión y
+                vuelve a intentarlo.
               </p>
             </div>
           ) : notificaciones.length === 0 ? (
