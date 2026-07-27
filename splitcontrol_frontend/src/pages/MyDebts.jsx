@@ -9,6 +9,10 @@ import {
   useParams,
 } from "react-router-dom";
 import logo from "../assets/splitcontrol-logo.png";
+import {
+  authFetch,
+  limpiarSesion,
+} from "../utils/authFetch";
 
 const API_BASE_URL = "http://127.0.0.1:8000/api";
 const SERVIDOR_BASE_URL = "http://127.0.0.1:8000";
@@ -299,27 +303,14 @@ function MyDebts() {
   ).length;
 
   const obtenerDeudas = useCallback(async () => {
-    const token = localStorage.getItem("access");
-
-    if (!token) {
-      setError(
-        "Tu sesión ha expirado. Inicia sesión nuevamente."
-      );
-      setCargando(false);
-      return;
-    }
-
     try {
       setCargando(true);
       setError("");
 
-      const response = await fetch(
+      const response = await authFetch(
         `${API_BASE_URL}/mis-deudas/`,
         {
           method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
         }
       );
 
@@ -363,27 +354,15 @@ function MyDebts() {
       deudaSeleccionadaId,
       solicitudSeleccionadaId
     ) => {
-      const token = localStorage.getItem("access");
-
-      if (!token) {
-        setErrorSolicitud(
-          "Tu sesión ha expirado. Inicia sesión nuevamente."
-        );
-        return;
-      }
-
       try {
         setCargandoSolicitud(true);
         setErrorSolicitud("");
         setSolicitudSeleccionada(null);
 
-        const response = await fetch(
+        const response = await authFetch(
           `${API_BASE_URL}/mis-deudas/${deudaSeleccionadaId}/solicitudes/${solicitudSeleccionadaId}/`,
           {
             method: "GET",
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
           }
         );
 
@@ -529,40 +508,23 @@ function MyDebts() {
       return;
     }
 
-    if (!evidencia) {
-      setErrorFormulario(
-        "Adjunta una evidencia en PDF, JPG, JPEG o PNG."
-      );
-      return;
-    }
-
-    const token = localStorage.getItem("access");
-
-    if (!token) {
-      setErrorFormulario(
-        "Tu sesión ha expirado. Inicia sesión nuevamente."
-      );
-      return;
-    }
-
     const formData = new FormData();
 
     formData.append(
       "descripcion",
       descripcionLimpia
     );
-    formData.append("evidencia", evidencia);
+    if (evidencia) {
+      formData.append("evidencia", evidencia);
+    }
 
     try {
       setEnviandoSolicitud(true);
 
-      const response = await fetch(
+      const response = await authFetch(
         `${API_BASE_URL}/mis-deudas/${deuda.id}/solicitudes/`,
         {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
           body: formData,
         }
       );
@@ -620,9 +582,7 @@ function MyDebts() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("access");
-    localStorage.removeItem("refresh");
-    localStorage.removeItem("username");
+    limpiarSesion();
     navigate("/login");
   };
 
@@ -888,6 +848,15 @@ function MyDebts() {
             >
               Cargando tus deudas...
             </div>
+          ) : error ? (
+            <div
+              className="alert alert-light border mt-4 mb-0"
+              role="status"
+            >
+              No fue posible consultar tus deudas.
+              Corrige el problema de sesión o conexión y
+              vuelve a intentarlo.
+            </div>
           ) : deudasFiltradas.length === 0 ? (
             <div className="empty-groups-card mt-4">
               <h5>
@@ -1071,8 +1040,9 @@ function MyDebts() {
 
                         <p className="text-muted">
                           Explica por qué consideras que
-                          la deuda debe resolverse y
-                          adjunta una evidencia.
+                          la deuda debe resolverse. Puedes
+                          adjuntar una evidencia de manera
+                          opcional.
                         </p>
 
                         {errorFormulario && (
@@ -1103,7 +1073,6 @@ function MyDebts() {
                             disabled={
                               enviandoSolicitud
                             }
-                            required
                           />
 
                           <small className="text-muted">
@@ -1114,7 +1083,7 @@ function MyDebts() {
 
                         <div className="mb-3">
                           <label className="form-label">
-                            Evidencia
+                            Evidencia (opcional)
                           </label>
 
                           <input
@@ -1132,8 +1101,8 @@ function MyDebts() {
                           />
 
                           <small className="text-muted">
-                            Formatos permitidos: PDF,
-                            JPG, JPEG y PNG.
+                            Campo opcional. Formatos
+                            permitidos: PDF, JPG, JPEG y PNG.
                           </small>
 
                           {evidencia && (

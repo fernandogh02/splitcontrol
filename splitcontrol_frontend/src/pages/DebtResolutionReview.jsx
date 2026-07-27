@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import logo from "../assets/splitcontrol-logo.png";
+import {
+  authFetch,
+  limpiarSesion,
+} from "../utils/authFetch";
 
 const API_BASE_URL = "http://127.0.0.1:8000/api";
 const SERVIDOR_BASE_URL = "http://127.0.0.1:8000";
@@ -160,27 +164,14 @@ function DebtResolutionReview() {
   const avatarLetter = username.charAt(0).toUpperCase();
 
   const obtenerSolicitudes = useCallback(async () => {
-    const token = localStorage.getItem("access");
-
-    if (!token) {
-      setError(
-        "Tu sesión ha expirado. Inicia sesión nuevamente."
-      );
-      setCargando(false);
-      return;
-    }
-
     try {
       setCargando(true);
       setError("");
 
-      const response = await fetch(
+      const response = await authFetch(
         `${API_BASE_URL}/grupos/${id}/solicitudes-deuda/`,
         {
           method: "GET",
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
         }
       );
 
@@ -293,25 +284,15 @@ function DebtResolutionReview() {
       return;
     }
 
-    const token = localStorage.getItem("access");
-
-    if (!token) {
-      setErrorDecision(
-        "Tu sesión ha expirado. Inicia sesión nuevamente."
-      );
-      return;
-    }
-
     try {
       setGuardandoDecision(true);
 
-      const response = await fetch(
+      const response = await authFetch(
         `${API_BASE_URL}/grupos/${id}/solicitudes-deuda/${solicitudSeleccionada.id}/`,
         {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify({
             decision,
@@ -375,9 +356,7 @@ function DebtResolutionReview() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("access");
-    localStorage.removeItem("refresh");
-    localStorage.removeItem("username");
+    limpiarSesion();
     navigate("/login");
   };
 
@@ -660,6 +639,12 @@ function DebtResolutionReview() {
           {cargando ? (
             <div className="alert alert-light border mt-4 mb-0">
               Cargando solicitudes pendientes...
+            </div>
+          ) : error ? (
+            <div className="alert alert-light border mt-4 mb-0">
+              No fue posible consultar las solicitudes.
+              Corrige el problema de sesión o conexión y
+              vuelve a intentarlo.
             </div>
           ) : solicitudes.length === 0 ? (
             <div className="empty-groups-card mt-4">

@@ -11127,7 +11127,7 @@ class EnviarSolicitudResolucionEvidenciaSC64Test(
             DebtResolutionRequest.objects.exists()
         )
 
-    def test_evidencia_es_obligatoria(
+    def test_evidencia_es_opcional(
         self,
     ):
         response = self.client.post(
@@ -11142,16 +11142,44 @@ class EnviarSolicitudResolucionEvidenciaSC64Test(
 
         self.assertEqual(
             response.status_code,
-            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_201_CREATED,
         )
 
-        self.assertIn(
-            "evidencia",
-            response.data,
+        self.assertEqual(
+            DebtResolutionRequest.objects.count(),
+            1,
+        )
+
+        solicitud = (
+            DebtResolutionRequest.objects.get()
+        )
+
+        self.assertEqual(
+            solicitud.descripcion,
+            (
+                "Pago realizado mediante "
+                "transferencia."
+            ),
         )
 
         self.assertFalse(
-            DebtResolutionRequest.objects.exists()
+            solicitud.evidencia
+        )
+
+        self.assertEqual(
+            solicitud.evidencia_nombre_original,
+            "",
+        )
+
+        self.assertIsNone(
+            response.data["solicitud"]["evidencia"]
+        )
+
+        self.assertEqual(
+            response.data[
+                "solicitud"
+            ]["evidencia_nombre_original"],
+            "",
         )
 
     def test_formato_de_evidencia_debe_ser_admitido(

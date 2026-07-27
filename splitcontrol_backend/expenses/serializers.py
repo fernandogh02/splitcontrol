@@ -961,7 +961,8 @@ class DebtResolutionRequestCreateSerializer(
     )
 
     evidencia = serializers.FileField(
-        required=True,
+        required=False,
+        allow_null=True,
         allow_empty_file=False,
     )
 
@@ -1073,9 +1074,9 @@ class DebtResolutionRequestCreateSerializer(
                     descripcion=validated_data[
                         "descripcion"
                     ],
-                    evidencia=validated_data[
+                    evidencia=validated_data.get(
                         "evidencia"
-                    ],
+                    ),
                 )
             )
         except DjangoValidationError as error:

@@ -25,4 +25,6 @@ dist/
 build/
 
 # Logs
-*.log
+*.logsplitcontrol_backend/evidencias_resolucion/
+
+/splitcontrol_backend/evidencias_resolucion/

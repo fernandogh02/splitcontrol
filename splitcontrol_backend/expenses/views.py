@@ -73,7 +73,6 @@ def procesar_cierres_vencidos():
 
 
 def grupos_visibles_para_usuario(usuario):
-    procesar_cierres_vencidos()
     return (
         Group.objects
         .filter(

@@ -400,13 +400,6 @@ function Dashboard() {
               )}
             </button>
 
-            <button className="sidebar-link">
-              ↺ Historial
-            </button>
-
-            <button className="sidebar-link">
-              ♙ Perfil
-            </button>
           </nav>
         </div>
 
@@ -469,9 +462,6 @@ function Dashboard() {
               )}
             </button>
 
-            <button className="icon-button">
-              ⚙️
-            </button>
           </div>
         </header>
 
@@ -574,14 +564,14 @@ function Dashboard() {
 
         <section className="quick-actions">
           <button
-            className="btn btn-primary"
+            className="btn btn-outline-primary"
             onClick={goToCreateGroup}
           >
             👥 Crear grupo
           </button>
 
           <button
-            className="btn btn-primary"
+            className="btn btn-outline-primary"
             onClick={() => navigate("/mis-deudas")}
           >
             💳 Mis deudas
@@ -595,7 +585,7 @@ function Dashboard() {
           </button>
 
           <button
-            className="btn btn-success"
+            className="btn btn-outline-success"
             onClick={() =>
               primerGrupoResponsable &&
               navigate(
@@ -615,8 +605,19 @@ function Dashboard() {
           </button>
         </section>
 
-        <section className="dashboard-content">
-          <div className="groups-section">
+        <section
+          className="dashboard-content"
+          style={{
+            gridTemplateColumns: "minmax(0, 1fr)",
+          }}
+        >
+          <div
+            className="groups-section"
+            style={{
+              width: "100%",
+              minWidth: 0,
+            }}
+          >
             <div className="section-title">
               <div>
                 <h3 className="mb-1">
@@ -774,30 +775,6 @@ function Dashboard() {
             )}
           </div>
 
-          <div className="movements-section">
-            <div className="section-title">
-              <h3>Últimos movimientos</h3>
-
-              <button>Filtrar</button>
-            </div>
-
-            <div className="movements-table">
-              <div className="table-header">
-                <span>Concepto</span>
-                <span>Pagado por</span>
-                <span>Grupo</span>
-                <span>Monto</span>
-              </div>
-
-              <div className="empty-movements">
-                Todavía no existen movimientos registrados.
-              </div>
-            </div>
-
-            <button className="history-link">
-              Ver historial completo
-            </button>
-          </div>
         </section>
       </main>
     </div>
